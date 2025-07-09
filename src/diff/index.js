@@ -566,7 +566,9 @@ function diffElementNodes(
 	}
 
 	if (!dom) {
-		const doc = parentDom.ownerDocument;
+		// Lynx: nodes are created from `options.document` (the host runtime's
+		// injected fake document) rather than `parentDom.ownerDocument`.
+		const doc = options.document;
 		if (!nodeType) {
 			return doc.createTextNode(newProps);
 		}
