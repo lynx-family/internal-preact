@@ -137,6 +137,7 @@ function renderComponent(component) {
 		const newVNode = assign({ constructor: UNDEFINED }, oldVNode);
 		newVNode._original = oldVNode._original + 1;
 		if (options.vnode) options.vnode(newVNode);
+		if (options.renderComponent) options.renderComponent(newVNode, component);
 
 		diff(
 			parentDom,
