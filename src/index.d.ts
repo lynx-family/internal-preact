@@ -363,3 +363,5 @@ export interface Context<T> extends preact.Provider<T> {
 export interface PreactContext<T> extends Context<T> {}
 
 export function createContext<T>(defaultValue: T): Context<T>;
+
+export function process(): void;
