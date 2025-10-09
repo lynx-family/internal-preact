@@ -37,6 +37,7 @@ import options from '../options';
  * @param {object} globalContext The current context object. Modified by
  * getChildContext
  * @param {string} namespace Current namespace of the DOM node (HTML, SVG, or MathML)
+ * @param {number} slotIndex The index of the slot being processed
  * @param {Array<PreactElement>} excessDomChildren
  * @param {Array<Component>} commitQueue List of components which have callbacks
  * to invoke in commitRoot
@@ -53,6 +54,7 @@ export function diff(
 	oldVNode,
 	globalContext,
 	namespace,
+	slotIndex,
 	excessDomChildren,
 	commitQueue,
 	oldDom,
@@ -263,6 +265,7 @@ export function diff(
 				oldVNode,
 				globalContext,
 				namespace,
+				slotIndex,
 				excessDomChildren,
 				commitQueue,
 				oldDom,
@@ -323,6 +326,7 @@ export function diff(
 			oldVNode,
 			globalContext,
 			namespace,
+			slotIndex,
 			excessDomChildren,
 			commitQueue,
 			isHydrating,
@@ -389,6 +393,7 @@ function cloneNode(node) {
  * @param {VNode} oldVNode The old virtual node
  * @param {object} globalContext The current context object
  * @param {string} namespace Current namespace of the DOM node (HTML, SVG, or MathML)
+ * @param {number} slotIndex The index of the slot being processed
  * @param {Array<PreactElement>} excessDomChildren
  * @param {Array<Component>} commitQueue List of components which have callbacks
  * to invoke in commitRoot
@@ -402,6 +407,7 @@ function diffElementNodes(
 	oldVNode,
 	globalContext,
 	namespace,
+	slotIndex,
 	excessDomChildren,
 	commitQueue,
 	isHydrating,
@@ -448,13 +454,16 @@ function diffElementNodes(
 
 	if (dom == null) {
 		if (nodeType === null) {
-			return options.document.createTextNode(newProps);
+			// @ts-expect-error vendor-specific createTextNode
+			return options.document.createTextNode(newProps, slotIndex);
 		}
 
 		dom = options.document.createElementNS(
 			namespace,
 			nodeType,
-			newProps.is && newProps
+			newProps.is && newProps,
+			// @ts-expect-error vendor-specific createElementNS
+			slotIndex
 		);
 
 		// we are creating a new node, so we can assume this is a new subtree (in
@@ -502,12 +511,19 @@ function diffElementNodes(
 			}
 		}
 
+		let hasNamedChildren = false;
+
 		// During hydration, props are not diffed at all (including dangerouslySetInnerHTML)
 		// @TODO we should warn in debug mode when props don't match here.
 		for (i in newProps) {
 			value = newProps[i];
 			if (i == 'children') {
 				newChildren = value;
+			} else if (typeof i == 'string' && i[0] == '$') {
+				newChildren ??= [];
+				hasNamedChildren = true;
+				const index = +i.slice(1);
+				newChildren[index] = value;
 			} else if (i == 'dangerouslySetInnerHTML') {
 				newHtml = value;
 			} else if (i == 'value') {
@@ -545,6 +561,7 @@ function diffElementNodes(
 				oldVNode,
 				globalContext,
 				nodeType == 'foreignObject' ? XHTML_NAMESPACE : namespace,
+				hasNamedChildren ? true : slotIndex,
 				excessDomChildren,
 				commitQueue,
 				excessDomChildren
