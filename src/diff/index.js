@@ -120,6 +120,7 @@ export function diff(
 				isNew = c._dirty = true;
 				c._renderCallbacks = [];
 				c._stateCallbacks = [];
+				c._slotIndex = slotIndex;
 			}
 
 			// Invoke getDerivedStateFromProps

@@ -158,7 +158,8 @@ export interface VNode<P = {}> extends preact.VNode<P> {
 	_flags: number;
 }
 
-export interface Component<P = {}, S = {}> extends Omit<preact.Component<P, S>, 'base'> {
+export interface Component<P = {}, S = {}>
+	extends Omit<preact.Component<P, S>, 'base'> {
 	// When component is functional component, this is reset to functional component
 	constructor: ComponentType<P>;
 	state: S; // Override Component["state"] to not be readonly for internal use, specifically Hooks
@@ -182,6 +183,8 @@ export interface Component<P = {}, S = {}> extends Omit<preact.Component<P, S>, 
 	_processingException?: Component<any, any> | null;
 	// Always read, set only when handling error. This is used to indicate at diffTime to set _processingException
 	_pendingError?: Component<any, any> | null;
+	// Internal slot index
+	_slotIndex?: number;
 }
 
 export interface PreactContext extends preact.Context<any> {
