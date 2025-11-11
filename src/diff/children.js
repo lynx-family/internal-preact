@@ -358,6 +358,10 @@ function insert(parentVNode, oldDom, parentDom, shouldPlace) {
 		}
 
 		return oldDom;
+	} else if (parentVNode._dom.__nextSlotIndex != parentVNode._dom.__slotIndex) {
+		parentVNode._dom.__slotIndex = parentVNode._dom.__nextSlotIndex;
+		parentDom.insertBefore(parentVNode._dom, null);
+		oldDom = parentVNode._dom;
 	} else if (parentVNode._dom != oldDom) {
 		if (shouldPlace) {
 			if (oldDom && parentVNode.type && !oldDom.parentNode) {
