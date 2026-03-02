@@ -172,7 +172,7 @@
   "authors": [
     "The Preact Authors (https://github.com/preactjs/preact/contributors)"
   ],
-  "repository": "preactjs/preact",
+  "repository": "lynx-family/internal-preact",
   "bugs": "https://github.com/preactjs/preact/issues",
   "homepage": "https://preactjs.com",
   "devDependencies": {

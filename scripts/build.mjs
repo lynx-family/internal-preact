@@ -1,6 +1,11 @@
 /**
  * Build: Rollup → Babel (per module, downlevel + mangle.json property
- * renames) → Terser (minify + property mangle name cache).
+ * renames).
+ *
+ * The Lynx fork skips the upstream Terser pass (the v10 fork's microbundle
+ * `--no-compress`): only the explicit mangle.json renames are applied, so
+ * fork-added internals (`_slotIndex`, `options._diff2`, ...) keep their
+ * source names and the published dist stays readable.
  *
  *   node ./scripts/build.mjs             build everything
  *   node ./scripts/build.mjs --watch [pkg...]
@@ -15,7 +20,6 @@ import {
 } from 'node:zlib';
 import { rollup } from 'rollup';
 import { babel } from '@rollup/plugin-babel';
-import { minify } from 'terser';
 import fastRest from './babel-plugin-fast-rest.mjs';
 
 const ROOT = path.resolve(fileURLToPath(import.meta.url), '../..');
@@ -52,85 +56,13 @@ function renameMap() {
 	return rename;
 }
 
-/** The package's mangle.json doubles as terser's mangle name cache; packages
- * without one (test-utils) use their package.json `mangle` field, uncached. */
-function loadMangle(cwd) {
-	const file = path.resolve(cwd, 'mangle.json');
-	let nameCache = null;
-	let options;
-	if (fs.existsSync(file)) {
-		nameCache = readJson(file);
-		options = nameCache.minify || {};
-	} else {
-		const meta = readJson(path.resolve(cwd, 'package.json'));
-		options = { mangle: { properties: meta.minify || meta.mangle || {} } };
-	}
-	const properties = (options.mangle && options.mangle.properties) || {};
-	return {
-		file,
-		nameCache,
-		knownProps: nameCache ? { ...(nameCache.props || {}).props } : null,
-		compress: options.compress || {},
-		properties: {
-			...properties,
-			regex: properties.regex && new RegExp(properties.regex),
-			reserved: properties.reserved || []
-		}
-	};
-}
-
-function minifyPlugin(pkg) {
-	return {
-		name: 'minify',
-		async renderChunk(code) {
-			const mangle = loadMangle(pkg.cwd);
-
-			const result = await minify(code, {
-				compress: {
-					keep_infinity: true,
-					pure_getters: true,
-					passes: 10,
-					...mangle.compress
-				},
-				format: {
-					wrap_func_args: false,
-					comments: /^\s*([@#]__[A-Z]+__\s*$|@cc_on)/,
-					preserve_annotations: true
-				},
-				module: false,
-				ecma: 5,
-				toplevel: true,
-				mangle: { properties: mangle.properties },
-				nameCache: mangle.nameCache,
-				sourceMap: true
-			});
-
-			// unmapped private properties get a bundle-local name; pin them in
-			// mangle.json when another package needs to access them
-			if (mangle.nameCache) {
-				const after = (mangle.nameCache.props || {}).props || {};
-				const fresh = Object.keys(after).filter(k => !(k in mangle.knownProps));
-				if (fresh.length) {
-					console.warn(
-						`WARN [${pkg.name}]: properties mangled without a ${path.relative(ROOT, mangle.file)} entry: ` +
-							fresh.map(k => k.slice(1)).join(', ')
-					);
-				}
-			}
-
-			return { code: result.code, map: result.map };
-		}
-	};
-}
-
 function outputOptions(pkg, file) {
 	return {
 		format: 'es',
 		file,
 		sourcemap: true,
 		strict: false,
-		freeze: false,
-		plugins: [minifyPlugin(pkg)]
+		freeze: false
 	};
 }
 
