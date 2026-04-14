@@ -98,134 +98,138 @@ function removeOriginal(vnode, detachedParent, originalParent) {
 }
 
 // having custom inheritance instead of a class here saves a lot of bytes
-export function Suspense() {
-	// we do not call super here to golf some bytes...
-	this._pendingSuspensionCount = 0;
-	this._suspenders = null;
-	this._detachOnNextRender = null;
-}
-
-// Things we do here to save some bytes but are not proper JS inheritance:
-// - call `new Component()` as the prototype
-// - do not set `Suspense.prototype.constructor` to `Suspense`
-Suspense.prototype = new Component();
-
-/**
- * @this {import('./internal').SuspenseComponent}
- * @param {Promise} promise The thrown promise
- * @param {import('./internal').VNode<any, any>} suspendingVNode The suspending component
- */
-Suspense.prototype._childDidSuspend = function (promise, suspendingVNode) {
-	const suspendingComponent = suspendingVNode._component;
-
-	/** @type {import('./internal').SuspenseComponent} */
-	const c = this;
-
-	if (c._suspenders == null) {
-		c._suspenders = [];
-	}
-	c._suspenders.push(suspendingComponent);
-
-	const resolve = suspended(c._vnode);
-
-	let resolved = false;
-	const onResolved = () => {
-		if (resolved || c._unmounted) return;
-
-		resolved = true;
-		suspendingComponent._onResolve = null;
-
-		if (resolve) {
-			resolve(onSuspensionComplete);
-		} else {
-			onSuspensionComplete();
-		}
-	};
-
-	suspendingComponent._onResolve = onResolved;
-
-	// Store and null _parentDom to prevent setState/forceUpdate from
-	// scheduling renders while suspended. Render would be a no-op anyway
-	// since renderComponent checks _parentDom, but this avoids queue churn.
-	const originalParentDom = suspendingComponent._parentDom;
-	suspendingComponent._parentDom = null;
-
-	const onSuspensionComplete = () => {
-		if (!--c._pendingSuspensionCount) {
-			// If the suspension was during hydration we don't need to restore the
-			// suspended children into the _children array
-			if (c.state._suspended) {
-				const suspendedVNode = c.state._suspended;
-				c._vnode._children[0] = removeOriginal(
-					suspendedVNode,
-					suspendedVNode._component._parentDom,
-					suspendedVNode._component._originalParentDom
-				);
-			}
-
-			c.setState({ _suspended: (c._detachOnNextRender = null) });
-
-			let suspended;
-			while ((suspended = c._suspenders.pop())) {
-				// Restore _parentDom before forceUpdate so render can proceed
-				suspended._parentDom = originalParentDom;
-				suspended.forceUpdate();
-			}
-		}
-	};
-
-	/**
-	 * We do not set `suspended: true` during hydration because we want the actual markup
-	 * to remain on screen and hydrate it when the suspense actually gets resolved.
-	 * While in non-hydration cases the usual fallback -> component flow would occour.
-	 */
-	if (
-		!c._pendingSuspensionCount++ &&
-		!(suspendingVNode._flags & MODE_HYDRATE)
-	) {
-		c.setState({ _suspended: (c._detachOnNextRender = c._vnode._children[0]) });
-	}
-	promise.then(onResolved, onResolved);
-};
-
-Suspense.prototype.componentWillUnmount = function () {
-	this._suspenders = [];
-};
-
-/**
- * @this {import('./internal').SuspenseComponent}
- * @param {import('./internal').SuspenseComponent["props"]} props
- * @param {import('./internal').SuspenseState} state
- */
-Suspense.prototype.render = function (props, state) {
-	if (this._detachOnNextRender) {
-		// When the Suspense's _vnode was created by a call to createVNode
-		// (i.e. due to a setState further up in the tree)
-		// it's _children prop is null, in this case we "forget" about the parked vnodes to detach
-		if (this._vnode._children) {
-			const detachedParent = options.document.createElement('div');
-			const detachedComponent = this._vnode._children[0]._component;
-			this._vnode._children[0] = detachedClone(
-				this._detachOnNextRender,
-				detachedParent,
-				(detachedComponent._originalParentDom = detachedComponent._parentDom)
-			);
-		}
-
+export const Suspense = /*#__PURE__*/ (function () {
+	function _Suspense() {
+		// we do not call super here to golf some bytes...
+		this._pendingSuspensionCount = 0;
+		this._suspenders = null;
 		this._detachOnNextRender = null;
 	}
 
-	// Wrap fallback tree in a VNode that prevents itself from being marked as aborting mid-hydration:
-	/** @type {import('./internal').VNode} */
-	const fallback =
-		state._suspended && createElement(Fragment, null, props.fallback);
-	if (fallback) fallback._flags &= ~MODE_HYDRATE;
+	// Things we do here to save some bytes but are not proper JS inheritance:
+	// - call `new Component()` as the prototype
+	// - do not set `Suspense.prototype.constructor` to `Suspense`
+	_Suspense.prototype = new Component();
+	/**
+	 * @this {import('./internal').SuspenseComponent}
+	 * @param {Promise} promise The thrown promise
+	 * @param {import('./internal').VNode<any, any>} suspendingVNode The suspending component
+	 */
+	_Suspense.prototype._childDidSuspend = function (promise, suspendingVNode) {
+		const suspendingComponent = suspendingVNode._component;
 
-	return [
-		createElement(Fragment, null, state._suspended ? null : props.children),
-		fallback
-	];
-};
+		/** @type {import('./internal').SuspenseComponent} */
+		const c = this;
+
+		if (c._suspenders == null) {
+			c._suspenders = [];
+		}
+		c._suspenders.push(suspendingComponent);
+
+		const resolve = suspended(c._vnode);
+
+		let resolved = false;
+		const onResolved = () => {
+			if (resolved || c._unmounted) return;
+
+			resolved = true;
+			suspendingComponent._onResolve = null;
+
+			if (resolve) {
+				resolve(onSuspensionComplete);
+			} else {
+				onSuspensionComplete();
+			}
+		};
+
+		suspendingComponent._onResolve = onResolved;
+
+		// Store and null _parentDom to prevent setState/forceUpdate from
+		// scheduling renders while suspended. Render would be a no-op anyway
+		// since renderComponent checks _parentDom, but this avoids queue churn.
+		const originalParentDom = suspendingComponent._parentDom;
+		suspendingComponent._parentDom = null;
+
+		const onSuspensionComplete = () => {
+			if (!--c._pendingSuspensionCount) {
+				// If the suspension was during hydration we don't need to restore the
+				// suspended children into the _children array
+				if (c.state._suspended) {
+					const suspendedVNode = c.state._suspended;
+					c._vnode._children[0] = removeOriginal(
+						suspendedVNode,
+						suspendedVNode._component._parentDom,
+						suspendedVNode._component._originalParentDom
+					);
+				}
+
+				c.setState({ _suspended: (c._detachOnNextRender = null) });
+
+				let suspended;
+				while ((suspended = c._suspenders.pop())) {
+					// Restore _parentDom before forceUpdate so render can proceed
+					suspended._parentDom = originalParentDom;
+					suspended.forceUpdate();
+				}
+			}
+		};
+
+		/**
+		 * We do not set `suspended: true` during hydration because we want the actual markup
+		 * to remain on screen and hydrate it when the suspense actually gets resolved.
+		 * While in non-hydration cases the usual fallback -> component flow would occour.
+		 */
+		if (
+			!c._pendingSuspensionCount++ &&
+			!(suspendingVNode._flags & MODE_HYDRATE)
+		) {
+			c.setState({
+				_suspended: (c._detachOnNextRender = c._vnode._children[0])
+			});
+		}
+		promise.then(onResolved, onResolved);
+	};
+
+	_Suspense.prototype.componentWillUnmount = function () {
+		this._suspenders = [];
+	};
+
+	/**
+	 * @this {import('./internal').SuspenseComponent}
+	 * @param {import('./internal').SuspenseComponent["props"]} props
+	 * @param {import('./internal').SuspenseState} state
+	 */
+	_Suspense.prototype.render = function (props, state) {
+		if (this._detachOnNextRender) {
+			// When the Suspense's _vnode was created by a call to createVNode
+			// (i.e. due to a setState further up in the tree)
+			// it's _children prop is null, in this case we "forget" about the parked vnodes to detach
+			if (this._vnode._children) {
+				const detachedParent = options.document.createElement('div');
+				const detachedComponent = this._vnode._children[0]._component;
+				this._vnode._children[0] = detachedClone(
+					this._detachOnNextRender,
+					detachedParent,
+					(detachedComponent._originalParentDom = detachedComponent._parentDom)
+				);
+			}
+
+			this._detachOnNextRender = null;
+		}
+
+		// Wrap fallback tree in a VNode that prevents itself from being marked as aborting mid-hydration:
+		/** @type {import('./internal').VNode} */
+		const fallback =
+			state._suspended && createElement(Fragment, null, props.fallback);
+		if (fallback) fallback._flags &= ~MODE_HYDRATE;
+
+		return [
+			createElement(Fragment, null, state._suspended ? null : props.children),
+			fallback
+		];
+	};
+	return _Suspense;
+})();
 
 /**
  * Checks and calls the parent component's _suspended method, passing in the
