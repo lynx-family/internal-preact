@@ -199,6 +199,7 @@ const defer =
  * @param {import('./internal').Component} c The component to rerender
  */
 export function enqueueRender(c) {
+	'background only';
 	if (
 		(!c._dirty &&
 			(c._dirty = true) &&
@@ -219,6 +220,7 @@ const depthSort = (a, b) => a._vnode._depth - b._vnode._depth;
 
 /** Flush the render queue by rerendering all queued components */
 export function process() {
+	'background only';
 	try {
 		let c,
 			l = 1;

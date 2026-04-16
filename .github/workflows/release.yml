@@ -1,5 +1,9 @@
 name: Release
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - v10.x
 
 jobs:
   build:

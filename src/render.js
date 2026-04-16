@@ -12,6 +12,7 @@ import { slice } from './util';
  * existing DOM tree rooted at `replaceNode`
  */
 export function render(vnode, parentDom, replaceNode) {
+	'background only';
 	if (options._root) options._root(vnode, parentDom);
 
 	// We abuse the `replaceNode` parameter in `hydrate()` to signal if we are in
@@ -70,5 +71,6 @@ export function render(vnode, parentDom, replaceNode) {
  * @param {import('./internal').PreactElement} parentDom The DOM element to update
  */
 export function hydrate(vnode, parentDom) {
+	'background only';
 	render(vnode, parentDom, hydrate);
 }
