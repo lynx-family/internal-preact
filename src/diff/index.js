@@ -553,6 +553,16 @@ function diffElementNodes(
 		} else {
 			if (oldHtml) dom.innerHTML = '';
 
+			let _slotIndex = slotIndex;
+			if (hasNamedChildren) {
+				// @ts-expect-error newChildren must be an array
+				if (newChildren.length === 1) {
+					newChildren = newChildren[0];
+					_slotIndex = 0;
+				} else {
+					_slotIndex = true;
+				}
+			}
 			diffChildren(
 				// @ts-expect-error
 				newVNode.type == 'template' ? dom.content : dom,
@@ -561,7 +571,7 @@ function diffElementNodes(
 				oldVNode,
 				globalContext,
 				nodeType == 'foreignObject' ? XHTML_NAMESPACE : namespace,
-				hasNamedChildren ? true : slotIndex,
+				_slotIndex,
 				excessDomChildren,
 				commitQueue,
 				excessDomChildren
