@@ -12,7 +12,7 @@ import {
 } from '../constants';
 import { BaseComponent, getDomSibling } from '../component';
 import { Fragment } from '../create-element';
-import { diffChildren, flattenNamedChildren } from './children';
+import { diffChildren } from './children';
 import { setProperty } from './props';
 import { assign, isArray, removeNode, slice } from '../util';
 import options from '../options';
@@ -221,7 +221,6 @@ export function diff(
 
 			let renderHook = options._render,
 				count = 0;
-				debugger
 			if (isClassComponent) {
 				c.state = c._nextState;
 				c._dirty = false;
@@ -512,7 +511,7 @@ function diffElementNodes(
 			}
 		}
 
-		let hasNamedChildren = false;
+		let slotMap;
 
 		// During hydration, props are not diffed at all (including dangerouslySetInnerHTML)
 		// @TODO we should warn in debug mode when props don't match here.
@@ -521,10 +520,18 @@ function diffElementNodes(
 			if (i == 'children') {
 				newChildren = value;
 			} else if (typeof i == 'string' && i[0] == '$') {
-				newChildren ??= [];
-				hasNamedChildren = true;
+				newChildren = newChildren || [];
+				slotMap = slotMap || [];
 				const index = +i.slice(1);
-				newChildren[index] = value;
+				if (Array.isArray(value)) {
+					for (let i = 0 ; i < value.length; i++) {
+						newChildren.push(value[i])
+						slotMap.push(index)
+					}
+				} else {
+					newChildren.push(value)
+					slotMap.push(index)
+				}
 			} else if (i == 'dangerouslySetInnerHTML') {
 				newHtml = value;
 			} else if (i == 'value') {
@@ -554,20 +561,6 @@ function diffElementNodes(
 		} else {
 			if (oldHtml) dom.innerHTML = '';
 
-			let _slotIndex = slotIndex;
-			if (hasNamedChildren) {
-				// Flatten array slot values so we never create a throwaway
-				// `Fragment` VNode just to group them, and so single-slot vs
-				// multi-slot share one code path. Each flattened child carries
-				// its original slot through the `slotMap`; `findMatchingIndex`
-				// uses it to keep reconciliation scoped per-slot (so a
-				// `<text>` at slot 1 never cross-matches a `<text>` at slot 0
-				// on update).
-				// @ts-expect-error newChildren is an array of slot values
-				const { flat, slotMap } = flattenNamedChildren(newChildren);
-				newChildren = flat;
-				_slotIndex = slotMap;
-			}
 			diffChildren(
 				// @ts-expect-error
 				newVNode.type == 'template' ? dom.content : dom,
@@ -576,7 +569,7 @@ function diffElementNodes(
 				oldVNode,
 				globalContext,
 				nodeType == 'foreignObject' ? XHTML_NAMESPACE : namespace,
-				_slotIndex,
+				slotMap || slotIndex,
 				excessDomChildren,
 				commitQueue,
 				excessDomChildren
