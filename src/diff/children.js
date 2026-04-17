@@ -1,5 +1,21 @@
 import { diff, unmount, applyRef } from './index';
 import { createVNode, Fragment } from '../create-element';
+let __preactFragmentCreateCount = 0;
+let __preactFragmentCreateBySource = Object.create(null);
+export function __getPreactFragmentStats() {
+	return {
+		total: __preactFragmentCreateCount,
+		bySource: { ...__preactFragmentCreateBySource }
+	};
+}
+export function __resetPreactFragmentStats() {
+	__preactFragmentCreateCount = 0;
+	__preactFragmentCreateBySource = Object.create(null);
+}
+function __countFragment(source) {
+	__preactFragmentCreateCount++;
+	__preactFragmentCreateBySource[source] = (__preactFragmentCreateBySource[source] || 0) + 1;
+}
 
 /**
  * Flatten top-level array children of a multi-slot `$N` value set into a
@@ -252,6 +268,7 @@ function constructNewChildrenArray(
 				NULL
 			);
 		} else if (isArray(childVNode)) {
+			__countFragment('array-auto-wrap');
 			childVNode = newParentVNode._children[i] = createVNode(
 				Fragment,
 				{ children: childVNode },
