@@ -12,7 +12,7 @@ import {
 } from '../constants';
 import { BaseComponent, getDomSibling } from '../component';
 import { Fragment } from '../create-element';
-import { diffChildren, flattenNamedChildren } from './children';
+import { diffChildren } from './children';
 import { setProperty } from './props';
 import { assign, isArray, removeNode, slice } from '../util';
 import options from '../options';
@@ -221,7 +221,6 @@ export function diff(
 
 			let renderHook = options._render,
 				count = 0;
-				debugger
 			if (isClassComponent) {
 				c.state = c._nextState;
 				c._dirty = false;
@@ -556,17 +555,13 @@ function diffElementNodes(
 
 			let _slotIndex = slotIndex;
 			if (hasNamedChildren) {
-				// Flatten array slot values so we never create a throwaway
-				// `Fragment` VNode just to group them, and so single-slot vs
-				// multi-slot share one code path. Each flattened child carries
-				// its original slot through the `slotMap`; `findMatchingIndex`
-				// uses it to keep reconciliation scoped per-slot (so a
-				// `<text>` at slot 1 never cross-matches a `<text>` at slot 0
-				// on update).
-				// @ts-expect-error newChildren is an array of slot values
-				const { flat, slotMap } = flattenNamedChildren(newChildren);
-				newChildren = flat;
-				_slotIndex = slotMap;
+				// @ts-expect-error newChildren must be an array
+				if (newChildren.length === 1) {
+					newChildren = newChildren[0];
+					_slotIndex = 0;
+				} else {
+					_slotIndex = true;
+				}
 			}
 			diffChildren(
 				// @ts-expect-error

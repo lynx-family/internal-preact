@@ -1,57 +1,5 @@
 import { diff, unmount, applyRef } from './index';
 import { createVNode, Fragment } from '../create-element';
-let __preactFragmentCreateCount = 0;
-let __preactFragmentCreateBySource = Object.create(null);
-export function __getPreactFragmentStats() {
-	return {
-		total: __preactFragmentCreateCount,
-		bySource: { ...__preactFragmentCreateBySource }
-	};
-}
-export function __resetPreactFragmentStats() {
-	__preactFragmentCreateCount = 0;
-	__preactFragmentCreateBySource = Object.create(null);
-}
-function __countFragment(source) {
-	__preactFragmentCreateCount++;
-	__preactFragmentCreateBySource[source] = (__preactFragmentCreateBySource[source] || 0) + 1;
-}
-
-/**
- * Flatten top-level array children of a multi-slot `$N` value set into a
- * sibling-flat list, carrying a parallel `slotMap` that preserves each
- * child's original slot. Used by `diffElementNodes` so we never need to
- * wrap array slot values in a transient `Fragment` — which is what the
- * multi-slot transform's `$N={arr.map(...)}` output relies on.
- *
- * @param {any[]} newChildren sparse-or-dense array where index == slot
- * @returns {{flat: any[], slotMap: number[]}}
- */
-export function flattenNamedChildren(newChildren) {
-	const flat = [];
-	const slotMap = [];
-	for (let i = 0; i < newChildren.length; i++) {
-		const v = newChildren[i];
-		if (v === UNDEFINED) continue;
-		if (isArray(v)) flattenNamedInto(v, flat, slotMap, i);
-		else {
-			flat.push(v);
-			slotMap.push(i);
-		}
-	}
-	return { flat, slotMap };
-}
-
-function flattenNamedInto(arr, out, slotMap, slot) {
-	for (let i = 0; i < arr.length; i++) {
-		const c = arr[i];
-		if (isArray(c)) flattenNamedInto(c, out, slotMap, slot);
-		else {
-			out.push(c);
-			slotMap.push(slot);
-		}
-	}
-}
 import {
 	EMPTY_OBJ,
 	EMPTY_ARR,
@@ -82,7 +30,7 @@ import { getDomSibling } from '../component';
  * @param {object} globalContext The current context object - modified by
  * getChildContext
  * @param {string} namespace Current namespace of the DOM node (HTML, SVG, or MathML)
- * @param {number | number[]} slotIndex The slot index to inherit for every child. A `number[]` indicates `renderResult` is generated from `$N` slots (multi-slot), with each entry holding the original slot index for the flattened child at the same position.
+ * @param {number | true} slotIndex The index of the slot being processed. `true` indicates that `renderResult` is generated from `$[num]` slots
  * @param {Array<PreactElement>} excessDomChildren
  * @param {Array<Component>} commitQueue List of components which have callbacks
  * to invoke in commitRoot
@@ -122,15 +70,6 @@ export function diffChildren(
 	/** @type {VNode[]} */
 	let oldChildren = (oldParentVNode && oldParentVNode._children) || EMPTY_ARR;
 
-	// Pin the (per-child) slot map on the parent VNode so the next render can
-	// read it back as `oldSlotMap` to scope reconciliation per-slot.
-	/** @type {number[] | null} */
-	const newSlotMap = isArray(slotIndex) ? slotIndex : NULL;
-	newParentVNode._slotMap = newSlotMap;
-	/** @type {number[] | null} */
-	const oldSlotMap =
-		(oldParentVNode && oldParentVNode._slotMap) || NULL;
-
 	let newChildrenLength = renderResult.length;
 
 	oldDom = constructNewChildrenArray(
@@ -138,9 +77,7 @@ export function diffChildren(
 		renderResult,
 		oldChildren,
 		oldDom,
-		newChildrenLength,
-		newSlotMap,
-		oldSlotMap
+		newChildrenLength
 	);
 
 	for (i = 0; i < newChildrenLength; i++) {
@@ -163,11 +100,8 @@ export function diffChildren(
 			globalContext,
 			namespace,
 			// <view $0={[1, 2, 3].map(num => <text>{num}</text>)} />
-			// all <text/> element should inherit the `slotIndex` of `0`.
-			// Multi-slot parents pass `slotIndex` as a per-child `slotMap`
-			// built in `diffElementNodes`; non-multi-slot parents pass a
-			// single number which every child inherits.
-			newSlotMap ? newSlotMap[i] : slotIndex,
+			// all <text/> element should inherit the `slotIndex` of `0`
+			slotIndex === true ? i : slotIndex,
 			excessDomChildren,
 			commitQueue,
 			oldDom,
@@ -220,9 +154,7 @@ function constructNewChildrenArray(
 	renderResult,
 	oldChildren,
 	oldDom,
-	newChildrenLength,
-	newSlotMap,
-	oldSlotMap
+	newChildrenLength
 ) {
 	/** @type {number} */
 	let i;
@@ -268,7 +200,6 @@ function constructNewChildrenArray(
 				NULL
 			);
 		} else if (isArray(childVNode)) {
-			__countFragment('array-auto-wrap');
 			childVNode = newParentVNode._children[i] = createVNode(
 				Fragment,
 				{ children: childVNode },
@@ -303,9 +234,7 @@ function constructNewChildrenArray(
 			childVNode,
 			oldChildren,
 			skewedIndex,
-			remainingOldChildren,
-			newSlotMap ? newSlotMap[i] : -1,
-			oldSlotMap
+			remainingOldChildren
 		));
 
 		oldVNode = NULL;
@@ -477,31 +406,18 @@ export function toChildArray(children, out) {
  * @param {VNode[]} oldChildren
  * @param {number} skewedIndex
  * @param {number} remainingOldChildren
- * @param {number} newSlot -1 when the parent isn't multi-slot; otherwise the slot the new child belongs to.
- * @param {number[] | null} oldSlotMap The previous render's slot-per-child map; used to confine matches to the same slot.
  * @returns {number}
  */
 function findMatchingIndex(
 	childVNode,
 	oldChildren,
 	skewedIndex,
-	remainingOldChildren,
-	newSlot,
-	oldSlotMap
+	remainingOldChildren
 ) {
 	const key = childVNode.key;
 	const type = childVNode.type;
-	// When reconciling inside a multi-slot parent, an old child only counts
-	// if it was at the same slot last time. Otherwise we'd cross-match a
-	// `<text>` from slot N against a `<text>` from slot M and move DOM nodes
-	// across slots, which breaks the SnapshotInstance's per-slot parenting.
-	const slotOk = (j) =>
-		newSlot === -1 || !oldSlotMap || oldSlotMap[j] === newSlot;
 	let oldVNode = oldChildren[skewedIndex];
-	const matched =
-		oldVNode != NULL &&
-		(oldVNode._flags & MATCHED) == 0 &&
-		slotOk(skewedIndex);
+	const matched = oldVNode != NULL && (oldVNode._flags & MATCHED) == 0;
 
 	// We only need to perform a search if there are more children
 	// (remainingOldChildren) to search. However, if the oldVNode we just looked
@@ -519,7 +435,7 @@ function findMatchingIndex(
 		remainingOldChildren > (matched ? 1 : 0);
 
 	if (
-		(oldVNode === NULL && key == null && slotOk(skewedIndex)) ||
+		(oldVNode === NULL && key == null) ||
 		(matched && key == oldVNode.key && type == oldVNode.type)
 	) {
 		return skewedIndex;
@@ -533,8 +449,7 @@ function findMatchingIndex(
 				oldVNode != NULL &&
 				(oldVNode._flags & MATCHED) == 0 &&
 				key == oldVNode.key &&
-				type == oldVNode.type &&
-				slotOk(childIndex)
+				type == oldVNode.type
 			) {
 				return childIndex;
 			}
