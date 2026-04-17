@@ -9,10 +9,5 @@ export {
 export { BaseComponent as Component, process } from './component';
 export { cloneElement } from './clone-element';
 export { createContext } from './create-context';
-export {
-	toChildArray,
-	flattenNamedChildren,
-	__getPreactFragmentStats,
-	__resetPreactFragmentStats
-} from './diff/children';
+export { toChildArray, flattenNamedChildren } from './diff/children';
 export { default as options } from './options';
