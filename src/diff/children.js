@@ -1,5 +1,41 @@
 import { diff, unmount, applyRef } from './index';
 import { createVNode, Fragment } from '../create-element';
+
+/**
+ * Flatten top-level array children of a multi-slot `$N` value set into a
+ * sibling-flat list, carrying a parallel `slotMap` that preserves each
+ * child's original slot. Used by `diffElementNodes` so we never need to
+ * wrap array slot values in a transient `Fragment` — which is what the
+ * multi-slot transform's `$N={arr.map(...)}` output relies on.
+ *
+ * @param {any[]} newChildren sparse-or-dense array where index == slot
+ * @returns {{flat: any[], slotMap: number[]}}
+ */
+export function flattenNamedChildren(newChildren) {
+	const flat = [];
+	const slotMap = [];
+	for (let i = 0; i < newChildren.length; i++) {
+		const v = newChildren[i];
+		if (v === UNDEFINED) continue;
+		if (isArray(v)) flattenNamedInto(v, flat, slotMap, i);
+		else {
+			flat.push(v);
+			slotMap.push(i);
+		}
+	}
+	return { flat, slotMap };
+}
+
+function flattenNamedInto(arr, out, slotMap, slot) {
+	for (let i = 0; i < arr.length; i++) {
+		const c = arr[i];
+		if (isArray(c)) flattenNamedInto(c, out, slotMap, slot);
+		else {
+			out.push(c);
+			slotMap.push(slot);
+		}
+	}
+}
 import {
 	EMPTY_OBJ,
 	EMPTY_ARR,
