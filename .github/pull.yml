@@ -1,0 +1,10 @@
+version: "1"
+rules:
+  - base: v10.x
+    upstream: preactjs:v10.x
+    mergeMethod: merge
+    mergeUnstable: true
+  - base: main
+    upstream: preactjs:main
+    mergeMethod: merge
+    mergeUnstable: true
