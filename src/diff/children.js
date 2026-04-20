@@ -194,7 +194,9 @@ function constructNewChildrenArray(
 		if (
 			childVNode == NULL ||
 			typeof childVNode == 'boolean' ||
-			typeof childVNode == 'function'
+			typeof childVNode == 'function' ||
+			// ts-expect-error Reduce an extra dom on empty text nodes
+			childVNode === ''
 		) {
 			newChildren[i] = NULL;
 			continue;
