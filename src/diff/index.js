@@ -37,6 +37,7 @@ import options from '../options';
  * @param {object} globalContext The current context object. Modified by
  * getChildContext
  * @param {string} namespace Current namespace of the DOM node (HTML, SVG, or MathML)
+ * @param {number} slotIndex The index of the slot being processed
  * @param {Array<PreactElement>} excessDomChildren
  * @param {Array<Component>} commitQueue List of components which have callbacks
  * to invoke in commitRoot
@@ -53,6 +54,7 @@ export function diff(
 	oldVNode,
 	globalContext,
 	namespace,
+	slotIndex,
 	excessDomChildren,
 	commitQueue,
 	oldDom,
@@ -118,6 +120,7 @@ export function diff(
 				isNew = c._dirty = true;
 				c._renderCallbacks = [];
 				c._stateCallbacks = [];
+				c._slotIndex = slotIndex;
 			}
 
 			// Invoke getDerivedStateFromProps
@@ -263,6 +266,7 @@ export function diff(
 				oldVNode,
 				globalContext,
 				namespace,
+				slotIndex,
 				excessDomChildren,
 				commitQueue,
 				oldDom,
@@ -316,6 +320,7 @@ export function diff(
 	) {
 		newVNode._children = oldVNode._children;
 		newVNode._dom = oldVNode._dom;
+		newVNode._dom.__nextSlotIndex = slotIndex;
 	} else {
 		oldDom = newVNode._dom = diffElementNodes(
 			oldVNode._dom,
@@ -323,11 +328,13 @@ export function diff(
 			oldVNode,
 			globalContext,
 			namespace,
+			slotIndex,
 			excessDomChildren,
 			commitQueue,
 			isHydrating,
 			refQueue
 		);
+		newVNode._dom.__nextSlotIndex = slotIndex;
 	}
 
 	if ((tmp = options.diffed)) tmp(newVNode);
@@ -389,6 +396,7 @@ function cloneNode(node) {
  * @param {VNode} oldVNode The old virtual node
  * @param {object} globalContext The current context object
  * @param {string} namespace Current namespace of the DOM node (HTML, SVG, or MathML)
+ * @param {number} slotIndex The index of the slot being processed
  * @param {Array<PreactElement>} excessDomChildren
  * @param {Array<Component>} commitQueue List of components which have callbacks
  * to invoke in commitRoot
@@ -402,6 +410,7 @@ function diffElementNodes(
 	oldVNode,
 	globalContext,
 	namespace,
+	slotIndex,
 	excessDomChildren,
 	commitQueue,
 	isHydrating,
@@ -502,12 +511,19 @@ function diffElementNodes(
 			}
 		}
 
+		let hasNamedChildren = false;
+
 		// During hydration, props are not diffed at all (including dangerouslySetInnerHTML)
 		// @TODO we should warn in debug mode when props don't match here.
 		for (i in newProps) {
 			value = newProps[i];
 			if (i == 'children') {
 				newChildren = value;
+			} else if (typeof i == 'string' && i[0] == '$') {
+				newChildren ??= [];
+				hasNamedChildren = true;
+				const index = +i.slice(1);
+				newChildren[index] = value;
 			} else if (i == 'dangerouslySetInnerHTML') {
 				newHtml = value;
 			} else if (i == 'value') {
@@ -537,6 +553,16 @@ function diffElementNodes(
 		} else {
 			if (oldHtml) dom.innerHTML = '';
 
+			let _slotIndex = slotIndex;
+			if (hasNamedChildren) {
+				// @ts-expect-error newChildren must be an array
+				if (newChildren.length === 1) {
+					newChildren = newChildren[0];
+					_slotIndex = 0;
+				} else {
+					_slotIndex = true;
+				}
+			}
 			diffChildren(
 				// @ts-expect-error
 				newVNode.type == 'template' ? dom.content : dom,
@@ -545,6 +571,7 @@ function diffElementNodes(
 				oldVNode,
 				globalContext,
 				nodeType == 'foreignObject' ? XHTML_NAMESPACE : namespace,
+				_slotIndex,
 				excessDomChildren,
 				commitQueue,
 				excessDomChildren

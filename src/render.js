@@ -43,6 +43,7 @@ export function render(vnode, parentDom, replaceNode) {
 		oldVNode || EMPTY_OBJ,
 		EMPTY_OBJ,
 		parentDom.namespaceURI,
+		0,
 		!isHydrating && replaceNode
 			? [replaceNode]
 			: oldVNode
