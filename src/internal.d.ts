@@ -121,6 +121,8 @@ export interface PreactElement extends preact.ContainerNode {
 	_children?: VNode<any> | null;
 	/** Event listeners to support event delegation */
 	_listeners?: Record<string, (e: Event) => void>;
+	__nextSlotIndex?: number;
+	__slotIndex?: number;
 }
 
 export interface PreactEvent extends Event {
@@ -178,6 +180,8 @@ export interface Component<P = {}, S = {}> extends Omit<
 	 */
 	_parentDom?: PreactElement | null;
 	_bits: number;
+	// Internal slot index
+	_slotIndex?: number;
 }
 
 export interface PreactContext extends preact.Context<any> {

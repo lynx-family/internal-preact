@@ -43,6 +43,7 @@ export function render(vnode, parentDom) {
 		oldVNode || EMPTY_OBJ,
 		EMPTY_OBJ,
 		parentDom.namespaceURI,
+		0,
 		oldVNode
 			? NULL
 			: parentDom.firstChild
