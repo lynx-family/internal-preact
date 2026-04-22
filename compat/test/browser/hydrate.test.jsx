@@ -13,6 +13,10 @@ describe('compat hydrate', () => {
 		teardown(scratch);
 	});
 
+	// Unrelated to the fork: synchronous `input.focus()` on a manually appended
+	// input does not update `document.activeElement` under vitest browser mode
+	// (headless chromium). Focus tests in the rest of the suite work because the
+	// input is created via `render()` first.
 	it.skip('should render react-style jsx', () => {
 		const input = document.createElement('input');
 		scratch.appendChild(input);

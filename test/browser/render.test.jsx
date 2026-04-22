@@ -1055,6 +1055,9 @@ describe('render()', () => {
 		expect(window.getSelection().getRangeAt(0).startOffset).to.equal(2);
 	});
 
+	// Lynx fork: empty-text vnodes are omitted (dfff9aa4), so when an adjacent
+	// text expression transitions from "" to non-empty the DOM must appendChild
+	// a new text node rather than mutate existing text.
 	it.skip('should not re-render when a component returns undefined', () => {
 		let Dialog = () => undefined;
 		/** @type {() => void} */
@@ -1648,6 +1651,9 @@ describe('render()', () => {
 		);
 	});
 
+	// Lynx fork: real regression — list shrinking when a child returns null
+	// throws NotFoundError from insertBefore. Likely fallout from the multi-slot
+	// / slot-index reordering changes; needs a src fix, not a test change.
 	it.skip('should shrink lists', () => {
 		function RenderedItem({ item }) {
 			if (item.renderAsNullInComponent) {
