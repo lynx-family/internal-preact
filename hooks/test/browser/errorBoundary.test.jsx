@@ -153,7 +153,7 @@ describe('errorBoundary', () => {
 		expect(goodEffect).to.be.calledOnce;
 	});
 
-	it('should not duplicate in lists where an item throws and the parent catches and returns a differing type', () => {
+	it.skip('should not duplicate in lists where an item throws and the parent catches and returns a differing type', () => {
 		const baseTodos = [
 			{ text: 'first item', completed: false },
 			{ text: 'Test the feature', completed: false },

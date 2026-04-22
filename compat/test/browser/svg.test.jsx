@@ -6,7 +6,8 @@ import {
 	sortAttributes
 } from '../../../test/_util/helpers';
 
-describe('svg', () => {
+// Lynx fork: SVG attribute-name normalization was removed from setProperty.
+describe.skip('svg', () => {
 	/** @type {HTMLDivElement} */
 	let scratch;
 

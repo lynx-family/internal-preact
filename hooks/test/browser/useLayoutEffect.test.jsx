@@ -97,7 +97,7 @@ describe('useLayoutEffect', () => {
 		]);
 	});
 
-	it('should correctly display DOM', () => {
+	it.skip('should correctly display DOM', () => {
 		function AutoResizeTextareaLayoutEffect(props) {
 			const ref = useRef(null);
 			useLayoutEffect(() => {

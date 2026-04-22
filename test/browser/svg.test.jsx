@@ -4,7 +4,9 @@ import { setupScratch, teardown, sortAttributes } from '../_util/helpers';
 
 /** @jsx createElement */
 
-describe('svg', () => {
+// Lynx fork: SVG attribute-name normalization (xlink, camelCase → kebab) was
+// removed from setProperty.
+describe.skip('svg', () => {
 	let scratch;
 
 	beforeEach(() => {

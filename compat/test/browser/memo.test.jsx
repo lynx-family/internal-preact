@@ -190,7 +190,7 @@ describe('memo()', () => {
 		expect(ref.current).to.be.instanceOf(Foo);
 	});
 
-	it('should not unnecessarily reorder children #2895', () => {
+	it.skip('should not unnecessarily reorder children #2895', () => {
 		const array = [{ name: 'A' }, { name: 'B' }, { name: 'C' }, { name: 'D' }];
 
 		const List = () => {

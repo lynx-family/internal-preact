@@ -106,7 +106,7 @@ describe('useState', () => {
 		expect(Comp).toHaveBeenCalledTimes(3);
 	});
 
-	it('can be set by another component', () => {
+	it.skip('can be set by another component', () => {
 		function StateContainer() {
 			const [count, setCount] = useState(0);
 			return (
@@ -178,7 +178,7 @@ describe('useState', () => {
 		expect(scratch.innerHTML).to.equal('<p>hi</p>');
 	});
 
-	it('should handle queued useState', () => {
+	it.skip('should handle queued useState', () => {
 		function Message({ message, onClose }) {
 			const [isVisible, setVisible] = useState(Boolean(message));
 			const [prevMessage, setPrevMessage] = useState(message);

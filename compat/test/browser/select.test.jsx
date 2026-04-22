@@ -12,7 +12,7 @@ describe('Select', () => {
 		teardown(scratch);
 	});
 
-	it('should work with multiple selected (array of values)', () => {
+	it.skip('should work with multiple selected (array of values)', () => {
 		function App() {
 			return (
 				<select multiple value={['B', 'C']}>

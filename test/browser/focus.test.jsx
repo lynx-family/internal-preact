@@ -433,7 +433,8 @@ describe('focus', () => {
 		validateFocus(input, 'add input before');
 	});
 
-	it('should maintain focus when hydrating', () => {
+	// Lynx fork: hydration no longer attaches event handlers; setProperty does raw setAttribute.
+	it.skip('should maintain focus when hydrating', () => {
 		const html = div([span('1'), span('2'), span('3'), inputStr()]);
 
 		scratch.innerHTML = html;
@@ -509,7 +510,8 @@ describe('focus', () => {
 		expect(document.activeElement).to.equalNode(input, 'After rerender');
 	});
 
-	it('should keep text selection', () => {
+	// Lynx fork: relies on the `value` DOM property being set (fast-path), which was removed.
+	it.skip('should keep text selection', () => {
 		/** @type {HTMLInputElement} */
 		let input;
 
