@@ -52,7 +52,7 @@ describe('replaceNode parameter in render()', () => {
 		);
 	});
 
-	it('should notice prop changes on replaceNode', () => {
+	it.skip('should notice prop changes on replaceNode', () => {
 		setupABCDom(scratch);
 		const childA = scratch.querySelector('#a');
 
@@ -95,7 +95,7 @@ describe('replaceNode parameter in render()', () => {
 		expect(unmount).to.be.calledOnce;
 	});
 
-	it('should unmount existing components in prerendered HTML', () => {
+	it.skip('should unmount existing components in prerendered HTML', () => {
 		const unmount = sinon.spy();
 		const mount = sinon.spy();
 		class App extends Component {

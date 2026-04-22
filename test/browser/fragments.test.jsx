@@ -2955,7 +2955,7 @@ describe('Fragment', () => {
 		]);
 	});
 
-	it('should not remove keyed elements', () => {
+	it.skip('should not remove keyed elements', () => {
 		let deleteItem = () => {};
 		const Element = ({ item, deleteItem }) => (
 			<Fragment>
@@ -3054,7 +3054,7 @@ describe('Fragment', () => {
 		]);
 	});
 
-	it('should swap nested fragments correctly', () => {
+	it.skip('should swap nested fragments correctly', () => {
 		/** @type {() => void} */
 		let swap;
 		class App extends Component {

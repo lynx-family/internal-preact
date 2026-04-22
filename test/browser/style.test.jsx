@@ -3,7 +3,9 @@ import { setupScratch, teardown, sortCss } from '../_util/helpers';
 
 /** @jsx createElement */
 
-describe('style attribute', () => {
+// Lynx fork: style object handling was removed from setProperty; style always goes
+// through raw setAttribute.
+describe.skip('style attribute', () => {
 	/** @type {HTMLElement} */
 	let scratch;
 

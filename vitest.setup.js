@@ -1,8 +1,13 @@
 import sinon from 'sinon';
 import { expect, chai, describe } from 'vitest';
 import sinonChai from 'sinon-chai';
+import { options } from 'preact';
 
 chai.use(sinonChai);
+
+// The Lynx fork replaced `document.createElementNS` with `options.document.createElementNS`
+// so a host runtime can inject its own document. For browser tests, point it at the real one.
+options.document = document;
 
 globalThis.context = describe;
 globalThis.sinon = sinon;

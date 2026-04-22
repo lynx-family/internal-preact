@@ -7,7 +7,9 @@ import {
 
 /** @jsx createElement */
 
-describe('event handling', () => {
+// Lynx fork: setProperty is simplified to raw setAttribute, so the preact event
+// delegation pipeline does not run. Skip the whole suite.
+describe.skip('event handling', () => {
 	let scratch, proto;
 
 	function fireEvent(on, type) {

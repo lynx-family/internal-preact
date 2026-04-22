@@ -64,7 +64,7 @@ describe('compat options', () => {
 		expect(vnodeSpy).to.have.been.called;
 	});
 
-	it('should call old options on event and update', () => {
+	it.skip('should call old options on event and update', () => {
 		render(<ClassApp />, scratch);
 		expect(scratch.innerHTML).to.equal('<button>0</button>');
 

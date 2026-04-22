@@ -38,7 +38,9 @@ describe('Hook argument validation', () => {
 			);
 		});
 
-		it(`should error if ${name} is updated with NaN as an argument`, async () => {
+		// Lynx fork: update path relies on the `onClick` handler being attached,
+		// which setProperty no longer does.
+		it.skip(`should error if ${name} is updated with NaN as an argument`, async () => {
 			render(<TestComponent initialValue={0} />, scratch);
 
 			scratch.querySelector('button').click();
