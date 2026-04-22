@@ -2,7 +2,9 @@ import { createElement, render } from 'preact';
 import { setupScratch, teardown, sortCss } from '../_util/helpers';
 import { vi } from 'vitest';
 
-describe('style attribute', () => {
+// Lynx fork: style object handling was removed from setProperty; style always goes
+// through raw setAttribute.
+describe.skip('style attribute', () => {
 	/** @type {HTMLElement} */
 	let scratch;
 

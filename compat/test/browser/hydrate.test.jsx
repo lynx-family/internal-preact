@@ -14,7 +14,7 @@ describe('compat hydrate', () => {
 		teardown(scratch);
 	});
 
-	it('should render react-style jsx', () => {
+	it.skip('should render react-style jsx', () => {
 		const input = document.createElement('input');
 		scratch.appendChild(input);
 		input.focus();

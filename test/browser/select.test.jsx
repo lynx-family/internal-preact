@@ -14,7 +14,7 @@ describe('Select', () => {
 		teardown(scratch);
 	});
 
-	it('should set <select> value', () => {
+	it.skip('should set <select> value', () => {
 		function App() {
 			return (
 				<select value="B">

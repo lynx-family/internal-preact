@@ -36,7 +36,7 @@ jobs:
           COVERAGE: true
           FLAKEY: false
         # Not using `npm test` since it rebuilds source which npm ci has already done
-        run: npm run lint
+        run: npm run lint && npm run test:unit
       - name: Coveralls GitHub Action
         if: github.repository == 'preactjs/preact'
         uses: coverallsapp/github-action@5cbfd81b66ca5d10c19b062c04de0199c215fb6e # v2.3.7

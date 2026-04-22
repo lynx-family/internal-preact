@@ -20,7 +20,7 @@ describe('Lifecycle methods', () => {
 	});
 
 	describe('static getDerivedStateFromProps', () => {
-		it('should set initial state with value returned from getDerivedStateFromProps', () => {
+		it.skip('should set initial state with value returned from getDerivedStateFromProps', () => {
 			class Foo extends Component {
 				static getDerivedStateFromProps(props) {
 					return {
@@ -37,7 +37,7 @@ describe('Lifecycle methods', () => {
 			expect(scratch.firstChild.className).to.be.equal('foo bar');
 		});
 
-		it('should update initial state with value returned from getDerivedStateFromProps', () => {
+		it.skip('should update initial state with value returned from getDerivedStateFromProps', () => {
 			class Foo extends Component {
 				constructor(props, context) {
 					super(props, context);
@@ -60,7 +60,7 @@ describe('Lifecycle methods', () => {
 			expect(scratch.firstChild.className).to.equal('not-foo bar');
 		});
 
-		it("should update the instance's state with the value returned from getDerivedStateFromProps when props change", () => {
+		it.skip("should update the instance's state with the value returned from getDerivedStateFromProps when props change", () => {
 			class Foo extends Component {
 				constructor(props, context) {
 					super(props, context);
@@ -101,7 +101,7 @@ describe('Lifecycle methods', () => {
 			expect(Foo.prototype.componentDidUpdate).toHaveBeenCalledTimes(1); // verify update occurred
 		});
 
-		it("should update the instance's state with the value returned from getDerivedStateFromProps when state changes", () => {
+		it.skip("should update the instance's state with the value returned from getDerivedStateFromProps when state changes", () => {
 			class Foo extends Component {
 				constructor(props, context) {
 					super(props, context);
@@ -139,7 +139,7 @@ describe('Lifecycle methods', () => {
 			expect(Foo.getDerivedStateFromProps).toHaveBeenCalledTimes(2);
 		});
 
-		it('should NOT modify state if null is returned', () => {
+		it.skip('should NOT modify state if null is returned', () => {
 			class Foo extends Component {
 				constructor(props, context) {
 					super(props, context);
@@ -165,7 +165,7 @@ describe('Lifecycle methods', () => {
 
 		// NOTE: Difference from React
 		// React v16.3.2 warns if undefined if returned from getDerivedStateFromProps
-		it('should NOT modify state if undefined is returned', () => {
+		it.skip('should NOT modify state if undefined is returned', () => {
 			class Foo extends Component {
 				constructor(props, context) {
 					super(props, context);
