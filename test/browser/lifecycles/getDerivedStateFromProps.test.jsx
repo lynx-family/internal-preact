@@ -21,7 +21,7 @@ describe('Lifecycle methods', () => {
 	});
 
 	describe('static getDerivedStateFromProps', () => {
-		it.skip('should set initial state with value returned from getDerivedStateFromProps', () => {
+		it('should set initial state with value returned from getDerivedStateFromProps', () => {
 			class Foo extends Component {
 				static getDerivedStateFromProps(props) {
 					return {
@@ -30,15 +30,15 @@ describe('Lifecycle methods', () => {
 					};
 				}
 				render() {
-					return <div className={`${this.state.foo} ${this.state.bar}`} />;
+					return <div class={`${this.state.foo} ${this.state.bar}`} />;
 				}
 			}
 
 			render(<Foo foo="foo" />, scratch);
-			expect(scratch.firstChild.className).to.be.equal('foo bar');
+			expect(scratch.firstChild.getAttribute('class')).to.be.equal('foo bar');
 		});
 
-		it.skip('should update initial state with value returned from getDerivedStateFromProps', () => {
+		it('should update initial state with value returned from getDerivedStateFromProps', () => {
 			class Foo extends Component {
 				constructor(props, context) {
 					super(props, context);
@@ -53,15 +53,15 @@ describe('Lifecycle methods', () => {
 					};
 				}
 				render() {
-					return <div className={`${this.state.foo} ${this.state.bar}`} />;
+					return <div class={`${this.state.foo} ${this.state.bar}`} />;
 				}
 			}
 
 			render(<Foo />, scratch);
-			expect(scratch.firstChild.className).to.equal('not-foo bar');
+			expect(scratch.firstChild.getAttribute('class')).to.equal('not-foo bar');
 		});
 
-		it.skip("should update the instance's state with the value returned from getDerivedStateFromProps when props change", () => {
+		it("should update the instance's state with the value returned from getDerivedStateFromProps when props change", () => {
 			class Foo extends Component {
 				constructor(props, context) {
 					super(props, context);
@@ -81,7 +81,7 @@ describe('Lifecycle methods', () => {
 				componentDidMount() {}
 				componentDidUpdate() {}
 				render() {
-					return <div className={this.state.value} />;
+					return <div class={this.state.value} />;
 				}
 			}
 
@@ -90,19 +90,19 @@ describe('Lifecycle methods', () => {
 			sinon.spy(Foo.prototype, 'componentDidUpdate');
 
 			render(<Foo update={false} />, scratch);
-			expect(scratch.firstChild.className).to.equal('initial');
+			expect(scratch.firstChild.getAttribute('class')).to.equal('initial');
 			expect(Foo.getDerivedStateFromProps).to.have.callCount(1);
 			expect(Foo.prototype.componentDidMount).to.have.callCount(1); // verify mount occurred
 			expect(Foo.prototype.componentDidUpdate).to.have.callCount(0);
 
 			render(<Foo update />, scratch);
-			expect(scratch.firstChild.className).to.equal('updated');
+			expect(scratch.firstChild.getAttribute('class')).to.equal('updated');
 			expect(Foo.getDerivedStateFromProps).to.have.callCount(2);
 			expect(Foo.prototype.componentDidMount).to.have.callCount(1);
 			expect(Foo.prototype.componentDidUpdate).to.have.callCount(1); // verify update occurred
 		});
 
-		it.skip("should update the instance's state with the value returned from getDerivedStateFromProps when state changes", () => {
+		it("should update the instance's state with the value returned from getDerivedStateFromProps when state changes", () => {
 			class Foo extends Component {
 				constructor(props, context) {
 					super(props, context);
@@ -125,22 +125,24 @@ describe('Lifecycle methods', () => {
 					this.setState({ value: 'updated' });
 				}
 				render() {
-					return <div className={this.state.value} />;
+					return <div class={this.state.value} />;
 				}
 			}
 
 			sinon.spy(Foo, 'getDerivedStateFromProps');
 
 			render(<Foo />, scratch);
-			expect(scratch.firstChild.className).to.equal('initial');
+			expect(scratch.firstChild.getAttribute('class')).to.equal('initial');
 			expect(Foo.getDerivedStateFromProps).to.have.been.calledOnce;
 
 			rerender(); // call rerender to handle cDM setState call
-			expect(scratch.firstChild.className).to.equal('updated derived');
+			expect(scratch.firstChild.getAttribute('class')).to.equal(
+				'updated derived'
+			);
 			expect(Foo.getDerivedStateFromProps).to.have.been.calledTwice;
 		});
 
-		it.skip('should NOT modify state if null is returned', () => {
+		it('should NOT modify state if null is returned', () => {
 			class Foo extends Component {
 				constructor(props, context) {
 					super(props, context);
@@ -153,20 +155,20 @@ describe('Lifecycle methods', () => {
 					return null;
 				}
 				render() {
-					return <div className={`${this.state.foo} ${this.state.bar}`} />;
+					return <div class={`${this.state.foo} ${this.state.bar}`} />;
 				}
 			}
 
 			sinon.spy(Foo, 'getDerivedStateFromProps');
 
 			render(<Foo />, scratch);
-			expect(scratch.firstChild.className).to.equal('foo bar');
+			expect(scratch.firstChild.getAttribute('class')).to.equal('foo bar');
 			expect(Foo.getDerivedStateFromProps).to.have.been.called;
 		});
 
 		// NOTE: Difference from React
 		// React v16.3.2 warns if undefined if returned from getDerivedStateFromProps
-		it.skip('should NOT modify state if undefined is returned', () => {
+		it('should NOT modify state if undefined is returned', () => {
 			class Foo extends Component {
 				constructor(props, context) {
 					super(props, context);
@@ -177,14 +179,14 @@ describe('Lifecycle methods', () => {
 				}
 				static getDerivedStateFromProps() {}
 				render() {
-					return <div className={`${this.state.foo} ${this.state.bar}`} />;
+					return <div class={`${this.state.foo} ${this.state.bar}`} />;
 				}
 			}
 
 			sinon.spy(Foo, 'getDerivedStateFromProps');
 
 			render(<Foo />, scratch);
-			expect(scratch.firstChild.className).to.equal('foo bar');
+			expect(scratch.firstChild.getAttribute('class')).to.equal('foo bar');
 			expect(Foo.getDerivedStateFromProps).to.have.been.called;
 		});
 
