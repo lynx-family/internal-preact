@@ -34,7 +34,11 @@ jobs:
       - name: Build package version
         id: build-version
         run: |
-          FULL_VERSION="${{ steps.package-version.outputs.version }}-${{ steps.commit-hash.outputs.sha }}"
+          # Fixed-width UTC timestamp keeps semver prerelease ordering monotonic across
+          # commits, so tooling like Renovate will always see later releases as newer
+          # (git short-shas alone sort lexicographically and are not monotonic).
+          TIMESTAMP=$(date -u +%Y%m%d%H%M%S)
+          FULL_VERSION="${{ steps.package-version.outputs.version }}-${TIMESTAMP}-${{ steps.commit-hash.outputs.sha }}"
           echo "full_version=$FULL_VERSION" >> $GITHUB_OUTPUT
       - uses: actions/download-artifact@v4
         with:
