@@ -1651,10 +1651,13 @@ describe('render()', () => {
 		);
 	});
 
-	// Lynx fork: real regression — list shrinking when a child returns null
-	// throws NotFoundError from insertBefore. Likely fallout from the multi-slot
-	// / slot-index reordering changes; needs a src fix, not a test change.
-	it.skip('should shrink lists', () => {
+	// Regression guard for a keyed-shrink-with-null-render bug: a matched
+	// component that now renders null detaches its DOM mid-diff, and the
+	// subsequent mounted siblings must not use that stale `oldDom` as an
+	// `insertBefore` reference. Paired with the `__slotIndex`-at-creation
+	// fix in diffElementNodes so that insert()'s slot-branch doesn't fire
+	// spuriously on fresh DOM here.
+	it('should shrink lists', () => {
 		function RenderedItem({ item }) {
 			if (item.renderAsNullInComponent) {
 				return null;
@@ -1696,6 +1699,44 @@ describe('render()', () => {
 		expect(scratch.innerHTML).to.equal(
 			'<div><div>One</div><div>Six</div><div>Seven</div></div>'
 		);
+	});
+
+	// Exercises insert()'s slot-branch on a genuine slot transition: two keyed
+	// elements swap their $N positions, so across renders each element's
+	// `__slotIndex` is legitimately different from its new `__nextSlotIndex`.
+	// Unlike the shrink-lists test above, this case still drives the
+	// slot-branch even after the `__slotIndex`-at-creation fix — cross-slot
+	// repositioning is precisely what the branch is for.
+	it('should swap keyed children across $N slots', () => {
+		function App({ swap }) {
+			return swap
+				? createElement('div', {
+						$0: <span key="B">B</span>,
+						$1: <span key="A">A</span>
+					})
+				: createElement('div', {
+						$0: <span key="A">A</span>,
+						$1: <span key="B">B</span>
+					});
+		}
+
+		render(<App swap={false} />, scratch);
+		const firstDom = scratch.firstChild;
+		const aSpan = firstDom.childNodes[0];
+		const bSpan = firstDom.childNodes[1];
+		expect(scratch.innerHTML).to.equal(
+			'<div><span>A</span><span>B</span></div>'
+		);
+
+		render(<App swap={true} />, scratch);
+		expect(scratch.innerHTML).to.equal(
+			'<div><span>B</span><span>A</span></div>'
+		);
+		// DOM nodes must be reused (not destroyed and recreated), otherwise
+		// the slot-branch wasn't actually exercised as a transition path.
+		expect(scratch.firstChild).to.equal(firstDom);
+		expect(scratch.firstChild.childNodes[0]).to.equal(bSpan);
+		expect(scratch.firstChild.childNodes[1]).to.equal(aSpan);
 	});
 
 	it('handles shuffled child-ordering', function () {

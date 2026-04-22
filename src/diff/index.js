@@ -457,7 +457,10 @@ function diffElementNodes(
 
 	if (dom == null) {
 		if (nodeType === null) {
-			return options.document.createTextNode(newProps);
+			dom = options.document.createTextNode(newProps);
+			// See comment below on the element-creation path.
+			dom.__slotIndex = slotIndex;
+			return dom;
 		}
 
 		dom = options.document.createElementNS(
@@ -465,6 +468,14 @@ function diffElementNodes(
 			nodeType,
 			newProps.is && newProps
 		);
+		// Baseline `__slotIndex` on fresh DOM so insert()'s slot-branch only
+		// fires on a real cross-slot transition, not spuriously on first
+		// placement (when `__slotIndex` would otherwise be `undefined` and
+		// mismatch the freshly-set `__nextSlotIndex`). Without this, a mid-diff
+		// detached sibling can end up as an `insertBefore` reference and the
+		// browser throws NotFoundError. Mirrors Lynx's `SnapshotInstance`
+		// `__slotIndex = 0` class-field default.
+		dom.__slotIndex = slotIndex;
 
 		// we are creating a new node, so we can assume this is a new subtree (in
 		// case we are hydrating), this deopts the hydrate
