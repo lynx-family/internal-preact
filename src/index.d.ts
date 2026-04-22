@@ -82,11 +82,12 @@ export type ComponentFactory<P = {}> = ComponentType<P>;
 
 export type ComponentProps<
 	C extends ComponentType<any> | keyof JSXInternal.IntrinsicElements
-> = C extends ComponentType<infer P>
-	? P
-	: C extends keyof JSXInternal.IntrinsicElements
-		? JSXInternal.IntrinsicElements[C]
-		: {};
+> =
+	C extends ComponentType<infer P>
+		? P
+		: C extends keyof JSXInternal.IntrinsicElements
+			? JSXInternal.IntrinsicElements[C]
+			: {};
 
 export interface FunctionComponent<P = {}> {
 	(props: RenderableProps<P>, context?: any): ComponentChildren;
@@ -106,8 +107,10 @@ export interface ComponentClass<P = {}, S = {}> {
 	): Partial<S> | null;
 	getDerivedStateFromError?(error: any): Partial<S> | null;
 }
-export interface ComponentConstructor<P = {}, S = {}>
-	extends ComponentClass<P, S> {}
+export interface ComponentConstructor<P = {}, S = {}> extends ComponentClass<
+	P,
+	S
+> {}
 
 // Type alias for a component instance considered generally, whether stateless or stateful.
 export type AnyComponent<P = {}, S = {}> =
@@ -349,21 +352,18 @@ export function isValidElement(vnode: any): vnode is VNode;
 //
 // Context
 // -----------------------------------
-export interface Consumer<T>
-	extends FunctionComponent<{
-		children: (value: T) => ComponentChildren;
-	}> {}
+export interface Consumer<T> extends FunctionComponent<{
+	children: (value: T) => ComponentChildren;
+}> {}
 export interface PreactConsumer<T> extends Consumer<T> {}
 
-export interface Provider<T>
-	extends FunctionComponent<{
-		value: T;
-		children?: ComponentChildren;
-	}> {}
+export interface Provider<T> extends FunctionComponent<{
+	value: T;
+	children?: ComponentChildren;
+}> {}
 export interface PreactProvider<T> extends Provider<T> {}
-export type ContextType<C extends Context<any>> = C extends Context<infer T>
-	? T
-	: never;
+export type ContextType<C extends Context<any>> =
+	C extends Context<infer T> ? T : never;
 
 export interface Context<T> extends preact.Provider<T> {
 	Consumer: preact.Consumer<T>;
