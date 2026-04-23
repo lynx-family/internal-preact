@@ -1726,10 +1726,13 @@ describe('render()', () => {
 		);
 	});
 
-	// Lynx fork: real regression — list shrinking when a child returns null
-	// throws NotFoundError from insertBefore. Likely fallout from the multi-slot
-	// / slot-index reordering changes; needs a src fix, not a test change.
-	it.skip('should shrink lists', () => {
+	// Regression guard for a keyed-shrink-with-null-render bug: a matched
+	// component that now renders null detaches its DOM mid-diff, and the
+	// subsequent mounted siblings must not use that stale `oldDom` as an
+	// `insertBefore` reference. Paired with the `__slotIndex`-at-creation
+	// fix in diffElementNodes so that insert()'s slot-branch doesn't fire
+	// spuriously on fresh DOM here.
+	it('should shrink lists', () => {
 		function RenderedItem({ item }) {
 			if (item.renderAsNullInComponent) {
 				return null;
