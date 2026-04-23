@@ -372,10 +372,15 @@ function insert(parentVNode, oldDom, parentDom, shouldPlace) {
 		parentVNode._dom?.__nextSlotIndex != parentVNode._dom?.__slotIndex
 	) {
 		parentVNode._dom.__slotIndex = parentVNode._dom.__nextSlotIndex;
-		parentDom.insertBefore(
-			parentVNode._dom,
-			parentVNode._dom.__slotIndex === oldDom?.__slotIndex ? oldDom : null
-		);
+		// `oldDom` is the diff loop's cursor: the next old DOM child to
+		// process at this parent. Inserting before it places the moved
+		// node at the cursor's position, which is exactly the slot we
+		// are processing. Recover via `getDomSibling` if the cursor was
+		// unmounted earlier in the same diff, mirroring the plain-branch.
+		if (oldDom && parentVNode.type && !oldDom.parentNode) {
+			oldDom = getDomSibling(parentVNode);
+		}
+		parentDom.insertBefore(parentVNode._dom, oldDom || NULL);
 		oldDom = parentVNode._dom;
 	} else if (parentVNode._dom != oldDom) {
 		if (shouldPlace) {
