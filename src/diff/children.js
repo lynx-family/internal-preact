@@ -380,7 +380,14 @@ function insert(parentVNode, oldDom, parentDom, shouldPlace) {
 		if (oldDom && parentVNode.type && !oldDom.parentNode) {
 			oldDom = getDomSibling(parentVNode);
 		}
-		parentDom.insertBefore(parentVNode._dom, oldDom || NULL);
+		// When the cross-slot node is already at the cursor position, inserting
+		// before itself corrupts BSI linked lists. Use nextSibling instead —
+		// it's the same effective DOM position and emits a valid patch.
+		parentDom.insertBefore(
+			parentVNode._dom,
+			(parentVNode._dom !== oldDom ? oldDom : oldDom && oldDom.nextSibling) ||
+				NULL
+		);
 		oldDom = parentVNode._dom;
 	} else if (parentVNode._dom != oldDom) {
 		if (shouldPlace) {
