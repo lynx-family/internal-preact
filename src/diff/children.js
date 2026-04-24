@@ -372,9 +372,21 @@ function insert(parentVNode, oldDom, parentDom, shouldPlace) {
 		parentVNode._dom?.__nextSlotIndex != parentVNode._dom?.__slotIndex
 	) {
 		parentVNode._dom.__slotIndex = parentVNode._dom.__nextSlotIndex;
+		// `oldDom` is the diff loop's cursor: the next old DOM child to
+		// process at this parent. Inserting before it places the moved
+		// node at the cursor's position, which is exactly the slot we
+		// are processing. Recover via `getDomSibling` if the cursor was
+		// unmounted earlier in the same diff, mirroring the plain-branch.
+		if (oldDom && parentVNode.type && !oldDom.parentNode) {
+			oldDom = getDomSibling(parentVNode);
+		}
+		// When the cross-slot node is already at the cursor position, inserting
+		// before itself corrupts BSI linked lists. Use nextSibling instead —
+		// it's the same effective DOM position and emits a valid patch.
 		parentDom.insertBefore(
 			parentVNode._dom,
-			parentVNode._dom.__slotIndex === oldDom?.__slotIndex ? oldDom : null
+			(parentVNode._dom !== oldDom ? oldDom : oldDom && oldDom.nextSibling) ||
+				NULL
 		);
 		oldDom = parentVNode._dom;
 	} else if (parentVNode._dom != oldDom) {
