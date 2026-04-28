@@ -6,7 +6,8 @@ import React, {
 	Component,
 	useEffect,
 	Fragment,
-	useId
+	useId,
+	useRef
 } from 'preact/compat';
 import { setupScratch, teardown } from '../../../test/_util/helpers';
 import { setupRerender, act } from 'preact/test-utils';
@@ -95,6 +96,67 @@ describe('Portal', () => {
 		rerender();
 		expect(scratch.innerHTML).to.equal(
 			'<div>top</div><div>middle</div><div>bottom</div>'
+		);
+	});
+
+	it.only('use ref as portal container', async () => {
+		let setShowHello;
+		let setShowWorld;
+		const App = () => {
+			const ref = useRef(null);
+			const [refState, setRefState] = useState(null);
+			const [showHello, _setShowHello] = useState(true);
+			const [showWorld, _setShowWorld] = useState(true);
+
+			setShowHello = _setShowHello;
+			setShowWorld = _setShowWorld;
+
+			useEffect(() => {
+				if (ref.current) {
+					console.log('ref.current', ref.current);
+					setRefState(ref.current);
+				}
+			}, [ref.current]);
+
+			return (
+				<div>
+					<div ref={ref}>
+						{showHello && <p>Hello</p>}
+						{showWorld && <p>World</p>}
+					</div>
+					{refState && createPortal(<p>foobar</p>, refState)}
+				</div>
+			);
+		};
+
+		act(() => {
+			render(<App />, scratch);
+		});
+
+		expect(scratch.innerHTML).to.equal(
+			'<div><div><p>Hello</p><p>World</p><p>foobar</p></div></div>'
+		);
+
+		setShowHello(false);
+		rerender();
+		expect(scratch.innerHTML).to.equal(
+			'<div><div><p>World</p><p>foobar</p></div></div>'
+		);
+
+		setShowWorld(false);
+		rerender();
+		expect(scratch.innerHTML).to.equal('<div><div><p>foobar</p></div></div>');
+
+		setShowHello(true);
+		rerender();
+		expect(scratch.innerHTML).to.equal(
+			'<div><div><p>foobar</p><p>Hello</p></div></div>'
+		);
+
+		setShowWorld(true);
+		rerender();
+		expect(scratch.innerHTML).to.equal(
+			'<div><div><p>foobar</p><p>Hello</p><p>World</p></div></div>'
 		);
 	});
 
