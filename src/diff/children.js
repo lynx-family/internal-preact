@@ -77,7 +77,8 @@ export function diffChildren(
 		renderResult,
 		oldChildren,
 		oldDom,
-		newChildrenLength
+		newChildrenLength,
+		slotIndex
 	);
 
 	for (i = 0; i < newChildrenLength; i++) {
@@ -162,7 +163,8 @@ function constructNewChildrenArray(
 	renderResult,
 	oldChildren,
 	oldDom,
-	newChildrenLength
+	newChildrenLength,
+	slotIndex
 ) {
 	/** @type {number} */
 	let i;
@@ -232,6 +234,12 @@ function constructNewChildrenArray(
 		} else {
 			newParentVNode._children[i] = childVNode;
 		}
+
+		// Lynx: stamp slot identity so cross-position diff matching is constrained
+		// to the same structural slot. At template-slot level (slotIndex === true)
+		// every child gets a unique slot id (its position); at Fragment / list level
+		// children share the parent's slot id, so keyed reorder still works.
+		childVNode._slotIndex = slotIndex === true ? i : slotIndex;
 
 		const skewedIndex = i + skew;
 		childVNode._parent = newParentVNode;
@@ -440,6 +448,7 @@ function findMatchingIndex(
 ) {
 	const key = childVNode.key;
 	const type = childVNode.type;
+	const newSlot = childVNode._slotIndex;
 	let oldVNode = oldChildren[skewedIndex];
 	const matched = oldVNode != NULL && (oldVNode._flags & MATCHED) == 0;
 
@@ -452,15 +461,18 @@ function findMatchingIndex(
 	// if the oldVNode was null or matched, then there could needs to be at least
 	// 1 (aka `remainingOldChildren > 0`) children to find and compare against.
 	//
-	// If there is an unkeyed functional VNode, that isn't a built-in like our Fragment,
-	// we should not search as we risk re-using state of an unrelated VNode. (reverted for now)
-	let shouldSearch =
-		// (typeof type != 'function' || type === Fragment || key) &&
-		remainingOldChildren > (matched ? 1 : 0);
+	// Lynx: also require matching _slotIndex so that template-slot level diffs
+	// (where each child has a unique slot id) cannot reuse a vnode from a
+	// different structural slot, while Fragment/list-level diffs (where all
+	// children share the parent's slot id) keep their keyed reorder behavior.
+	let shouldSearch = remainingOldChildren > (matched ? 1 : 0);
 
 	if (
 		(oldVNode === NULL && key == null) ||
-		(matched && key == oldVNode.key && type == oldVNode.type)
+		(matched &&
+			key == oldVNode.key &&
+			type == oldVNode.type &&
+			oldVNode._slotIndex === newSlot)
 	) {
 		return skewedIndex;
 	} else if (shouldSearch) {
@@ -473,7 +485,8 @@ function findMatchingIndex(
 				oldVNode != NULL &&
 				(oldVNode._flags & MATCHED) == 0 &&
 				key == oldVNode.key &&
-				type == oldVNode.type
+				type == oldVNode.type &&
+				oldVNode._slotIndex === newSlot
 			) {
 				return childIndex;
 			}

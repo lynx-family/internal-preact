@@ -1732,11 +1732,15 @@ describe('render()', () => {
 		expect(scratch.innerHTML).to.equal(
 			'<div><span>B</span><span>A</span></div>'
 		);
-		// DOM nodes must be reused (not destroyed and recreated), otherwise
-		// the slot-branch wasn't actually exercised as a transition path.
+		// Container div is still the same instance.
 		expect(scratch.firstChild).to.equal(firstDom);
-		expect(scratch.firstChild.childNodes[0]).to.equal(bSpan);
-		expect(scratch.firstChild.childNodes[1]).to.equal(aSpan);
+		// Slot-indexed children no longer cross-match across slots even when
+		// they share a key — slot identity is preserved so that stateful
+		// components in different slots cannot have their state silently
+		// swapped (see also: lynx-stack dom-reuse.test.jsx). The visible DOM
+		// output stays correct; only the underlying nodes are freshly mounted.
+		expect(scratch.firstChild.childNodes[0]).to.not.equal(bSpan);
+		expect(scratch.firstChild.childNodes[1]).to.not.equal(aSpan);
 	});
 
 	// Minimized repro of a slot-branch correctness bug the fuzz test below
