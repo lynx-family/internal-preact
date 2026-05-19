@@ -80,7 +80,8 @@ export function diffChildren(
 		renderResult,
 		oldChildren,
 		oldDom,
-		newChildrenLength
+		newChildrenLength,
+		slotIndex
 	);
 
 	for (i = 0; i < newChildrenLength; i++) {
@@ -164,7 +165,8 @@ function constructNewChildrenArray(
 	renderResult,
 	oldChildren,
 	oldDom,
-	newChildrenLength
+	newChildrenLength,
+	slotIndex
 ) {
 	/** @type {number} */
 	let i;
@@ -231,6 +233,12 @@ function constructNewChildrenArray(
 		} else {
 			newChildren[i] = childVNode;
 		}
+
+		// Lynx: stamp slot identity so cross-position diff matching is constrained
+		// to the same structural slot. At template-slot level (slotIndex === true)
+		// every child gets a unique slot id (its position); at Fragment / list level
+		// children share the parent's slot id, so keyed reorder still works.
+		childVNode._slotIndex = slotIndex === true ? i : slotIndex;
 
 		const skewedIndex = i + skew;
 		childVNode._parent = newParentVNode;
@@ -407,7 +415,9 @@ function insert(parentVNode, oldDom, parentDom, isMounting) {
 		}
 
 		return oldDom;
-	} else if (parentVNode._dom?.__nextSlotIndex != parentVNode._dom?.__slotIndex) {
+	} else if (
+		parentVNode._dom?.__nextSlotIndex != parentVNode._dom?.__slotIndex
+	) {
 		parentVNode._dom.__slotIndex = parentVNode._dom.__nextSlotIndex;
 		// `oldDom` is the diff loop's cursor: the next old DOM child to
 		// process at this parent. Inserting before it places the moved
@@ -480,6 +490,7 @@ function findMatchingIndex(
 ) {
 	const key = childVNode.key;
 	const type = childVNode.type;
+	const newSlot = childVNode._slotIndex;
 	let oldVNode = oldChildren[skewedIndex];
 	const matched = oldVNode && !(oldVNode._flags & MATCHED);
 
@@ -492,17 +503,21 @@ function findMatchingIndex(
 	// if the oldVNode was null or matched, then there could needs to be at least
 	// 1 (aka `remainingOldChildren > 0`) children to find and compare against.
 	//
-	// If there is an unkeyed functional VNode, that isn't a built-in like our Fragment,
-	// we should not search as we risk re-using state of an unrelated VNode. (reverted for now)
+	// Lynx: also require matching _slotIndex so that template-slot level diffs
+	// (where each child has a unique slot id) cannot reuse a vnode from a
+	// different structural slot, while Fragment/list-level diffs (where all
+	// children share the parent's slot id) keep their keyed reorder behavior.
 	let shouldSearch =
-		// (typeof type != 'function' || type === Fragment || key) &&
 		// The ternary keeps this a Smi comparison; `> matched` would compare
 		// number to boolean which V8 can't serve from the fast path.
 		remainingOldChildren > (matched ? 1 : 0);
 
 	if (
 		(oldVNode === NULL && key == NULL) ||
-		(matched && key == oldVNode.key && type == oldVNode.type)
+		(matched &&
+			key == oldVNode.key &&
+			type == oldVNode.type &&
+			oldVNode._slotIndex === newSlot)
 	) {
 		return skewedIndex;
 	} else if (shouldSearch) {
@@ -515,7 +530,8 @@ function findMatchingIndex(
 				oldVNode &&
 				!(oldVNode._flags & MATCHED) &&
 				key == oldVNode.key &&
-				type == oldVNode.type
+				type == oldVNode.type &&
+				oldVNode._slotIndex === newSlot
 			) {
 				return childIndex;
 			}

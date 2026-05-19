@@ -159,7 +159,6 @@ export function diff(
 				c._bits |= COMPONENT_DIRTY;
 				c._renderCallbacks = [];
 				c._stateCallbacks = [];
-				c._slotIndex = slotIndex;
 			}
 
 			if (isClassComponent) {
