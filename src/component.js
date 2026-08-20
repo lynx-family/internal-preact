@@ -215,9 +215,18 @@ export function enqueueRender(c) {
 		prevDebounce != options.debounceRendering
 	) {
 		prevDebounce = options.debounceRendering;
-		(prevDebounce || queueMicrotask)(process);
+		(prevDebounce || defer)(process);
 	}
 }
+
+// Lynx JS runtimes are not browsers: `queueMicrotask` (an HTML API) may be
+// missing, so fall back to a Promise-based microtask.
+const defer =
+	typeof queueMicrotask == 'function'
+		? queueMicrotask
+		: /** @type {(cb: () => void) => void} */ (
+				cb => Promise.resolve().then(cb)
+			);
 
 /**
  * @param {import('./internal').Component} a

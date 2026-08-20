@@ -156,6 +156,8 @@ export interface VNode<P = {}> extends preact.VNode<P> {
 	_original: number;
 	_index: number;
 	_flags: number;
+	// Lynx: structural slot id assigned during diffChildren
+	_slotIndex?: number | true;
 }
 
 export interface Component<P = {}, S = {}> extends Omit<
