@@ -9,7 +9,9 @@ import {
 import { createElement } from 'preact/compat';
 import { vi } from 'vitest';
 
-describe('preact/compat events', () => {
+// Lynx fork: setProperty is simplified to raw setAttribute, so the compat event
+// normalization pipeline does not run. Skip the whole suite.
+describe.skip('preact/compat events', () => {
 	/** @type {HTMLDivElement} */
 	let scratch;
 	let proto;

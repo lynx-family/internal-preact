@@ -10,6 +10,7 @@ import { slice } from './util';
  * @param {import('./internal').PreactElement} parentDom The DOM element to render into
  */
 export function render(vnode, parentDom) {
+	'background only';
 	if (options._root) options._root(vnode, parentDom);
 
 	// https://github.com/preactjs/preact/issues/3794
@@ -42,6 +43,7 @@ export function render(vnode, parentDom) {
 		oldVNode || EMPTY_OBJ,
 		EMPTY_OBJ,
 		parentDom.namespaceURI,
+		0,
 		oldVNode
 			? NULL
 			: parentDom.firstChild
@@ -67,6 +69,7 @@ export function render(vnode, parentDom) {
  * @param {import('./internal').PreactElement} parentDom The DOM element to update
  */
 export function hydrate(vnode, parentDom) {
+	'background only';
 	// @ts-expect-error
 	vnode._flags |= MODE_HYDRATE;
 	render(vnode, parentDom);

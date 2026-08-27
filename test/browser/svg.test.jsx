@@ -3,7 +3,9 @@ import { setupRerender } from 'preact/test-utils';
 import { setupScratch, teardown, sortAttributes } from '../_util/helpers';
 import { vi } from 'vitest';
 
-describe('svg', () => {
+// Lynx fork: SVG attribute-name normalization (xlink, camelCase → kebab) was
+// removed from setProperty.
+describe.skip('svg', () => {
 	let scratch;
 
 	beforeEach(() => {

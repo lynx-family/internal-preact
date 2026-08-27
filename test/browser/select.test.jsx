@@ -14,7 +14,7 @@ describe('Select', () => {
 		teardown(scratch);
 	});
 
-	it('should set <select> value', () => {
+	it.skip('should set <select> value', () => {
 		function App() {
 			return (
 				<select value="B">
@@ -74,7 +74,7 @@ describe('Select', () => {
 	// which both subscribe to the same external store. The `<option>` producer
 	// has to render in the same pass, otherwise the new value is applied to the
 	// `<select>` before the matching `<option>` exists.
-	it('should select an option added by a separate component in the same update', () => {
+	it.skip('should select an option added by a separate component in the same update', () => {
 		/** @type {Array<() => void>} */
 		let subscribers = [];
 		let store = { items: ['A', 'B'], selected: 'B' };

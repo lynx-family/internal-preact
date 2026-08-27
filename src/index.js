@@ -7,7 +7,7 @@ export {
 	cloneElement,
 	isValidElement
 } from './create-element';
-export { BaseComponent as Component } from './component';
+export { BaseComponent as Component, process } from './component';
 export { createContext } from './create-context';
 export { createPortal } from './create-portal';
 export { toChildArray } from './diff/children';

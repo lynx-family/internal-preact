@@ -106,7 +106,9 @@ describe('suspense', () => {
 		});
 	});
 
-	it('should not materialize undefined DOM props when suspense resumes', () => {
+	// Lynx fork: setProperty always calls setAttribute, so null values are
+	// stringified instead of removing the attribute.
+	it.skip('should not materialize undefined DOM props when suspense resumes', () => {
 		const LazyComp = () => <span>Done</span>;
 
 		/** @type {() => Promise<void>} */

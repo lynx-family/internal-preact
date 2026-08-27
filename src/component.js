@@ -137,6 +137,7 @@ function renderComponent(component) {
 		const newVNode = assign({ constructor: UNDEFINED }, oldVNode);
 		newVNode._original = oldVNode._original + 1;
 		if (options.vnode) options.vnode(newVNode);
+		if (options.renderComponent) options.renderComponent(newVNode, component);
 
 		diff(
 			parentDom,
@@ -144,6 +145,7 @@ function renderComponent(component) {
 			oldVNode,
 			component._globalContext,
 			parentDom.namespaceURI,
+			newVNode._slotIndex,
 			oldVNode._flags & MODE_HYDRATE ? [oldDom] : NULL,
 			commitQueue,
 			oldDom || getDomSibling(oldVNode),
@@ -204,6 +206,7 @@ export function resetRenderCount() {
  * @param {import('./internal').Component} c The component to rerender
  */
 export function enqueueRender(c) {
+	'background only';
 	if (
 		(!(c._bits & COMPONENT_DIRTY) &&
 			(c._bits |= COMPONENT_DIRTY) &&
@@ -212,9 +215,18 @@ export function enqueueRender(c) {
 		prevDebounce != options.debounceRendering
 	) {
 		prevDebounce = options.debounceRendering;
-		(prevDebounce || queueMicrotask)(process);
+		(prevDebounce || defer)(process);
 	}
 }
+
+// Lynx JS runtimes are not browsers: `queueMicrotask` (an HTML API) may be
+// missing, so fall back to a Promise-based microtask.
+const defer =
+	typeof queueMicrotask == 'function'
+		? queueMicrotask
+		: /** @type {(cb: () => void) => void} */ (
+				cb => Promise.resolve().then(cb)
+			);
 
 /**
  * @param {import('./internal').Component} a
@@ -223,7 +235,8 @@ export function enqueueRender(c) {
 const depthSort = (a, b) => a._vnode._depth - b._vnode._depth;
 
 /** Flush the render queue by rerendering all queued components */
-function process() {
+export function process() {
+	'background only';
 	try {
 		let c,
 			l = 1;

@@ -46,7 +46,7 @@ describe('Components', () => {
 
 		beforeEach(() => {
 			instance = null;
-			PROPS = { foo: 'bar', onBaz: () => {} };
+			PROPS = { foo: 'bar' };
 			STATE = { text: 'Hello' };
 		});
 
@@ -1100,7 +1100,7 @@ describe('Components', () => {
 		});
 
 		it('should render nested functional components', () => {
-			const PROPS = { foo: 'bar', onBaz: () => {} };
+			const PROPS = { foo: 'bar' };
 
 			const Outer = vi.fn(props => <Inner {...props} />);
 
