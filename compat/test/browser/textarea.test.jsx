@@ -2,7 +2,9 @@ import React, { createElement, render, hydrate, useState } from 'preact/compat';
 import { setupScratch, teardown } from '../../../test/_util/helpers';
 import { act } from 'preact/test-utils';
 
-describe('Textarea', () => {
+// Lynx fork: relies on the `name in dom` DOM-property fast path (value/defaultValue)
+// which was removed from setProperty.
+describe.skip('Textarea', () => {
 	/** @type {HTMLElement} */
 	let scratch;
 

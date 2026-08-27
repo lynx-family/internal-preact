@@ -29,12 +29,12 @@ describe('Lifecycle methods', () => {
 					};
 				}
 				render() {
-					return <div className={`${this.state.foo} ${this.state.bar}`} />;
+					return <div class={`${this.state.foo} ${this.state.bar}`} />;
 				}
 			}
 
 			render(<Foo foo="foo" />, scratch);
-			expect(scratch.firstChild.className).to.be.equal('foo bar');
+			expect(scratch.firstChild.getAttribute('class')).to.be.equal('foo bar');
 		});
 
 		it('should update initial state with value returned from getDerivedStateFromProps', () => {
@@ -52,12 +52,12 @@ describe('Lifecycle methods', () => {
 					};
 				}
 				render() {
-					return <div className={`${this.state.foo} ${this.state.bar}`} />;
+					return <div class={`${this.state.foo} ${this.state.bar}`} />;
 				}
 			}
 
 			render(<Foo />, scratch);
-			expect(scratch.firstChild.className).to.equal('not-foo bar');
+			expect(scratch.firstChild.getAttribute('class')).to.equal('not-foo bar');
 		});
 
 		it("should update the instance's state with the value returned from getDerivedStateFromProps when props change", () => {
@@ -80,7 +80,7 @@ describe('Lifecycle methods', () => {
 				componentDidMount() {}
 				componentDidUpdate() {}
 				render() {
-					return <div className={this.state.value} />;
+					return <div class={this.state.value} />;
 				}
 			}
 
@@ -89,13 +89,13 @@ describe('Lifecycle methods', () => {
 			vi.spyOn(Foo.prototype, 'componentDidUpdate');
 
 			render(<Foo update={false} />, scratch);
-			expect(scratch.firstChild.className).to.equal('initial');
+			expect(scratch.firstChild.getAttribute('class')).to.equal('initial');
 			expect(Foo.getDerivedStateFromProps).toHaveBeenCalledTimes(1);
 			expect(Foo.prototype.componentDidMount).toHaveBeenCalledTimes(1); // verify mount occurred
 			expect(Foo.prototype.componentDidUpdate).toHaveBeenCalledTimes(0);
 
 			render(<Foo update />, scratch);
-			expect(scratch.firstChild.className).to.equal('updated');
+			expect(scratch.firstChild.getAttribute('class')).to.equal('updated');
 			expect(Foo.getDerivedStateFromProps).toHaveBeenCalledTimes(2);
 			expect(Foo.prototype.componentDidMount).toHaveBeenCalledTimes(1);
 			expect(Foo.prototype.componentDidUpdate).toHaveBeenCalledTimes(1); // verify update occurred
@@ -124,18 +124,20 @@ describe('Lifecycle methods', () => {
 					this.setState({ value: 'updated' });
 				}
 				render() {
-					return <div className={this.state.value} />;
+					return <div class={this.state.value} />;
 				}
 			}
 
 			vi.spyOn(Foo, 'getDerivedStateFromProps');
 
 			render(<Foo />, scratch);
-			expect(scratch.firstChild.className).to.equal('initial');
+			expect(scratch.firstChild.getAttribute('class')).to.equal('initial');
 			expect(Foo.getDerivedStateFromProps).toHaveBeenCalledTimes(1);
 
 			rerender(); // call rerender to handle cDM setState call
-			expect(scratch.firstChild.className).to.equal('updated derived');
+			expect(scratch.firstChild.getAttribute('class')).to.equal(
+				'updated derived'
+			);
 			expect(Foo.getDerivedStateFromProps).toHaveBeenCalledTimes(2);
 		});
 
@@ -152,14 +154,14 @@ describe('Lifecycle methods', () => {
 					return null;
 				}
 				render() {
-					return <div className={`${this.state.foo} ${this.state.bar}`} />;
+					return <div class={`${this.state.foo} ${this.state.bar}`} />;
 				}
 			}
 
 			vi.spyOn(Foo, 'getDerivedStateFromProps');
 
 			render(<Foo />, scratch);
-			expect(scratch.firstChild.className).to.equal('foo bar');
+			expect(scratch.firstChild.getAttribute('class')).to.equal('foo bar');
 			expect(Foo.getDerivedStateFromProps).toHaveBeenCalled();
 		});
 
@@ -176,14 +178,14 @@ describe('Lifecycle methods', () => {
 				}
 				static getDerivedStateFromProps() {}
 				render() {
-					return <div className={`${this.state.foo} ${this.state.bar}`} />;
+					return <div class={`${this.state.foo} ${this.state.bar}`} />;
 				}
 			}
 
 			vi.spyOn(Foo, 'getDerivedStateFromProps');
 
 			render(<Foo />, scratch);
-			expect(scratch.firstChild.className).to.equal('foo bar');
+			expect(scratch.firstChild.getAttribute('class')).to.equal('foo bar');
 			expect(Foo.getDerivedStateFromProps).toHaveBeenCalled();
 		});
 

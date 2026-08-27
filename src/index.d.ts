@@ -322,6 +322,9 @@ export interface Options {
 	 * is used.
 	 */
 	attr?(name: string, value: any): string | void;
+	document?: Document;
+	_diff2?(newVNode: VNode, oldVNode: VNode): void;
+	renderComponent?(newVNode: VNode, component: any): void;
 }
 
 export const options: Options;
@@ -360,3 +363,5 @@ export interface Context<T> extends preact.Provider<T> {
 export interface PreactContext<T> extends Context<T> {}
 
 export function createContext<T>(defaultValue: T): Context<T>;
+
+export function process(): void;
