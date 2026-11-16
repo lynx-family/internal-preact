@@ -23,16 +23,12 @@ export interface Options extends PreactOptions {
 	/** Attach a hook that is invoked before a hook's state is queried. */
 	_hook?(component: Component, index: number, type: HookType): void;
 	/**
-	 * Attach a hook that is invoked around passive effect batches and individual passive callbacks.
-	 * Phases: 0 = batch start, 1 = after-paint callback start, 2 = after-paint callback end,
-	 * 3 = batch end, 4 = pre-render callback start, 5 = pre-render callback end.
+	 * Attach a hook that brackets passive effect batches (0 = start, 3 = end)
+	 * and individual passive callbacks (1 = start, 2 = end).
 	 */
 	_passiveEffect?(
-		phase: 0 | 1 | 2 | 3 | 4 | 5,
-		component?: Component | null,
-		vnode?: VNode | null,
-		effectsQueue?: Component[],
-		cleanupsQueue?: EffectHookState[]
+		phase: 0 | 1 | 2 | 3,
+		target?: Component | EffectHookState
 	): void;
 }
 
@@ -92,8 +88,6 @@ export interface EffectHookState extends BaseHookState {
 	 * cleanup errors are routed to instead.
 	 */
 	_passive?: boolean | Component;
-	/** Unmounted vnode retained while its deferred passive cleanup is pending. */
-	_unmountVNode?: VNode;
 }
 
 export interface MemoHookState<T = unknown> extends BaseHookState {

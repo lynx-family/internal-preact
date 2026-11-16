@@ -80,6 +80,9 @@ function getRenderRoot(component) {
 	return rootDom.nodeType === DOCUMENT_NODE ? rootDom.documentElement : rootDom;
 }
 
+/** @type {((component: import('./internal').Component) => void) | null} */
+let notifyComponentEnqueued = null;
+
 export function initDebug() {
 	setupComponentStack();
 
@@ -93,10 +96,10 @@ export function initDebug() {
 	let oldCatchError = options._catchError;
 	let oldRoot = options._root;
 	let oldHook = options._hook;
+	let oldUnmount = options.unmount;
 	let oldCommit = options._commit;
+	let oldProcess = options._process;
 	let oldPassiveEffect = options._passiveEffect;
-	let oldEnqueueRender = options._enqueueRender;
-	let oldRenderPass = options._renderPass;
 	const warnedComponents = !isWeakMapSupported
 		? null
 		: {
@@ -106,11 +109,12 @@ export function initDebug() {
 			};
 	const deprecations = [];
 	const passiveUpdateStreaks = isWeakMapSupported ? new WeakMap() : null;
+	const unmountCleanupMeta = isWeakMapSupported ? new WeakMap() : null;
 	const passiveBatchStack = [];
 	const passiveEffectStack = [];
 	const renderPassStack = [];
-	let pendingEffectsQueue = null;
-	let pendingCleanupsQueue = null;
+	const pendingCleanups = [];
+	let stepSeq = 0;
 
 	function cleanBatchRoot(batch, root) {
 		if (!batch) return;
@@ -125,14 +129,37 @@ export function initDebug() {
 		}
 	}
 
+	function compactPendingCleanups(clearRoot) {
+		let write = 0;
+		for (let i = 0; i < pendingCleanups.length; i++) {
+			const s = pendingCleanups[i];
+			if (s && typeof s._cleanup == 'function') {
+				const meta = unmountCleanupMeta && unmountCleanupMeta.get(s);
+				if (clearRoot && meta && meta.root === clearRoot) {
+					unmountCleanupMeta.delete(s);
+					continue;
+				}
+				pendingCleanups[write++] = s;
+			}
+		}
+		pendingCleanups.length = write;
+	}
+
 	/**
 	 * @param {import('./internal').PreactElement} root
 	 */
 	function resetPassiveUpdateStreak(root) {
 		if (!passiveUpdateStreaks) return;
 		passiveUpdateStreaks.delete(root);
+		compactPendingCleanups(root);
 		for (let i = 0; i < passiveBatchStack.length; i++) {
 			cleanBatchRoot(passiveBatchStack[i], root);
+		}
+		for (let i = 0; i < passiveEffectStack.length; i++) {
+			cleanBatchRoot(passiveEffectStack[i].standaloneBatch, root);
+			if (passiveEffectStack[i].root === root) {
+				passiveEffectStack[i].root = null;
+			}
 		}
 		for (let i = 0; i < renderPassStack.length; i++) {
 			cleanBatchRoot(renderPassStack[i].preRenderBatch, root);
@@ -170,7 +197,7 @@ export function initDebug() {
 		}
 	}
 
-	function hasPendingPassiveOrRenderWork(root, rerenderQueue) {
+	function hasPendingPassiveOrRenderWork(root) {
 		for (let i = 0; i < passiveEffectStack.length; i++) {
 			if (passiveEffectStack[i].root === root) return true;
 		}
@@ -183,44 +210,84 @@ export function initDebug() {
 				return true;
 			}
 		}
-		if (rerenderQueue) {
-			for (let i = 0; i < rerenderQueue.length; i++) {
-				const comp = rerenderQueue[i];
-				if (
-					comp &&
-					comp._bits & COMPONENT_DIRTY &&
-					getRenderRoot(comp) === root
-				) {
-					return true;
-				}
+		compactPendingCleanups(null);
+		for (let i = 0; i < pendingCleanups.length; i++) {
+			const meta =
+				unmountCleanupMeta && unmountCleanupMeta.get(pendingCleanups[i]);
+			if (meta && meta.root === root) {
+				return true;
 			}
 		}
-		if (pendingEffectsQueue) {
-			for (let i = 0; i < pendingEffectsQueue.length; i++) {
-				const comp = pendingEffectsQueue[i];
-				if (
-					comp &&
-					comp.__hooks &&
-					comp.__hooks._pendingEffects.length &&
-					getRenderRoot(comp) === root
-				) {
-					return true;
+		if (root && root._children) {
+			const stack = [root._children];
+			while (stack.length) {
+				const vnode = stack.pop();
+				if (!vnode) continue;
+				const comp = vnode._component;
+				if (comp && comp._parentDom) {
+					if (comp._bits & COMPONENT_DIRTY) return true;
+					if (
+						comp.__hooks &&
+						comp.__hooks._pendingEffects &&
+						comp.__hooks._pendingEffects.length
+					) {
+						return true;
+					}
 				}
-			}
-		}
-		if (pendingCleanupsQueue) {
-			for (let i = 0; i < pendingCleanupsQueue.length; i++) {
-				const hookState = pendingCleanupsQueue[i];
-				if (
-					hookState &&
-					typeof hookState._cleanup == 'function' &&
-					getRenderRoot(hookState._passive) === root
-				) {
-					return true;
+				const children = vnode._children;
+				if (children) {
+					for (let i = 0; i < children.length; i++) {
+						if (children[i]) stack.push(children[i]);
+					}
 				}
 			}
 		}
 		return false;
+	}
+
+	function pushRenderPass() {
+		if (!passiveUpdateStreaks) return;
+		renderPassStack.push({
+			seq: ++stepSeq,
+			preRenderBatch: null,
+			committedRoots: []
+		});
+	}
+
+	function popRenderPass(checkSettled) {
+		if (!passiveUpdateStreaks) return;
+		const pass = renderPassStack.pop();
+		if (!pass) return;
+
+		if (pass.preRenderBatch) {
+			for (let i = 0; i < pass.preRenderBatch.touchedRoots.length; i++) {
+				const root = pass.preRenderBatch.touchedRoots[i];
+				if (pass.committedRoots.indexOf(root) === -1) {
+					pass.committedRoots.push(root);
+				}
+			}
+			finalizePassiveBatch(pass.preRenderBatch);
+		}
+
+		if (renderPassStack.length) {
+			const parentPass = renderPassStack[renderPassStack.length - 1];
+			for (let i = 0; i < pass.committedRoots.length; i++) {
+				const root = pass.committedRoots[i];
+				if (parentPass.committedRoots.indexOf(root) === -1) {
+					parentPass.committedRoots.push(root);
+				}
+			}
+		} else if (checkSettled) {
+			for (let i = 0; i < pass.committedRoots.length; i++) {
+				const root = pass.committedRoots[i];
+				if (
+					passiveUpdateStreaks.has(root) &&
+					!hasPendingPassiveOrRenderWork(root)
+				) {
+					passiveUpdateStreaks.delete(root);
+				}
+			}
+		}
 	}
 
 	options._catchError = (error, vnode, oldVNode, errorInfo) => {
@@ -242,13 +309,19 @@ export function initDebug() {
 			// We haven't recovered and we know at this point that there is no
 			// Suspense component higher up in the tree
 			if (error instanceof Error) {
+				if (!vnode || !vnode._parent) popRenderPass(false);
 				throw error;
 			}
 		}
 
 		errorInfo = errorInfo || {};
 		errorInfo.componentStack = getOwnerStack(vnode);
-		oldCatchError(error, vnode, oldVNode, errorInfo);
+		try {
+			oldCatchError(error, vnode, oldVNode, errorInfo);
+		} catch (rethrown) {
+			if (!vnode || !vnode._parent) popRenderPass(false);
+			throw rethrown;
+		}
 
 		// when an error was handled by an ErrorBoundary we still log it, matching what
 		// React does in development. Errors that were not handled are rethrown by the
@@ -392,6 +465,7 @@ export function initDebug() {
 		}
 
 		if (oldBeforeDiff) oldBeforeDiff(vnode);
+		if (!vnode._parent) pushRenderPass();
 	};
 
 	let renderCount = 0;
@@ -429,151 +503,146 @@ export function initDebug() {
 		if (oldHook) oldHook(comp, index, type);
 	};
 
+	options.unmount = vnode => {
+		if (passiveUpdateStreaks && unmountCleanupMeta && vnode) {
+			const comp = vnode._component;
+			const hooks = comp && comp.__hooks;
+			const list = hooks && hooks._list;
+			if (list) {
+				let root;
+				for (let i = 0; i < list.length; i++) {
+					const s = list[i];
+					if (s && s._passive && typeof s._cleanup == 'function') {
+						if (root === undefined) {
+							root = getRenderRoot(comp);
+						}
+						if (root) {
+							unmountCleanupMeta.set(s, { root, vnode });
+							pendingCleanups.push(s);
+						}
+					}
+				}
+			}
+		}
+		if (oldUnmount) oldUnmount(vnode);
+	};
+
 	options._commit = (vnode, commitQueue) => {
-		if (passiveUpdateStreaks && renderPassStack.length) {
-			const root = getRenderRoot(vnode && vnode._component);
+		if (oldCommit) oldCommit(vnode, commitQueue);
+		if (!passiveUpdateStreaks) return;
+
+		const root = getRenderRoot(vnode && vnode._component);
+		if (!root) return;
+
+		if (renderPassStack.length) {
 			const pass = renderPassStack[renderPassStack.length - 1];
-			if (root && pass.committedRoots.indexOf(root) === -1) {
+			if (pass.committedRoots.indexOf(root) === -1) {
 				pass.committedRoots.push(root);
 			}
+		} else if (
+			passiveUpdateStreaks.has(root) &&
+			!hasPendingPassiveOrRenderWork(root)
+		) {
+			passiveUpdateStreaks.delete(root);
 		}
-		if (oldCommit) oldCommit(vnode, commitQueue);
 	};
 
-	options._renderPass = (phase, rerenderQueue) => {
-		if (oldRenderPass) oldRenderPass(phase, rerenderQueue);
-		if (!passiveUpdateStreaks) return;
-
+	options._process = phase => {
+		if (oldProcess) oldProcess(phase);
 		if (phase === 0) {
-			renderPassStack.push({
-				preRenderBatch: null,
-				committedRoots: []
-			});
+			pushRenderPass();
 		} else if (phase === 1) {
-			const pass = renderPassStack.pop();
-			if (!pass) return;
-
-			if (pass.preRenderBatch) {
-				for (let i = 0; i < pass.preRenderBatch.touchedRoots.length; i++) {
-					const root = pass.preRenderBatch.touchedRoots[i];
-					if (pass.committedRoots.indexOf(root) === -1) {
-						pass.committedRoots.push(root);
-					}
-				}
-				finalizePassiveBatch(pass.preRenderBatch);
-			}
-
-			if (renderPassStack.length) {
-				const parentPass = renderPassStack[renderPassStack.length - 1];
-				for (let i = 0; i < pass.committedRoots.length; i++) {
-					const root = pass.committedRoots[i];
-					if (parentPass.committedRoots.indexOf(root) === -1) {
-						parentPass.committedRoots.push(root);
-					}
-				}
-			} else {
-				for (let i = 0; i < pass.committedRoots.length; i++) {
-					const root = pass.committedRoots[i];
-					if (
-						passiveUpdateStreaks.has(root) &&
-						!hasPendingPassiveOrRenderWork(root, rerenderQueue)
-					) {
-						passiveUpdateStreaks.delete(root);
-					}
-				}
-			}
+			popRenderPass(true);
 		}
 	};
 
-	options._passiveEffect = (
-		phase,
-		component,
-		vnode,
-		effectsQueue,
-		cleanupsQueue
-	) => {
-		if (oldPassiveEffect) {
-			oldPassiveEffect(phase, component, vnode, effectsQueue, cleanupsQueue);
-		}
+	options._passiveEffect = (phase, target) => {
+		if (oldPassiveEffect) oldPassiveEffect(phase, target);
 		if (!passiveUpdateStreaks) return;
-		if (effectsQueue) {
-			pendingEffectsQueue = effectsQueue;
-			pendingCleanupsQueue = cleanupsQueue;
-		}
 
 		if (phase === 0) {
 			passiveBatchStack.push({
+				seq: ++stepSeq,
 				touchedRoots: [],
 				updatedRoots: [],
 				triggerVNodes: []
 			});
 		} else if (phase === 1) {
-			const root = getRenderRoot(component);
-			passiveEffectStack.push({
-				root,
-				vnode: vnode || (component && component._vnode) || null
-			});
-			const batch = passiveBatchStack[passiveBatchStack.length - 1];
-			if (root && batch && batch.touchedRoots.indexOf(root) === -1) {
-				batch.touchedRoots.push(root);
-			}
-		} else if (phase === 2) {
-			passiveEffectStack.pop();
-		} else if (phase === 3) {
-			finalizePassiveBatch(passiveBatchStack.pop());
-		} else if (phase === 4) {
-			const pass = renderPassStack[renderPassStack.length - 1];
+			const topBatch = passiveBatchStack[passiveBatchStack.length - 1];
+			const topPass = renderPassStack[renderPassStack.length - 1];
 			let batch;
-			if (pass) {
-				if (!pass.preRenderBatch) {
-					pass.preRenderBatch = {
+			let standaloneBatch = null;
+			if (topBatch && (!topPass || topBatch.seq > topPass.seq)) {
+				batch = topBatch;
+			} else if (topPass) {
+				if (!topPass.preRenderBatch) {
+					topPass.preRenderBatch = {
+						seq: topPass.seq,
 						touchedRoots: [],
 						updatedRoots: [],
 						triggerVNodes: []
 					};
 				}
-				batch = pass.preRenderBatch;
+				batch = topPass.preRenderBatch;
 			} else {
-				batch = {
+				standaloneBatch = batch = {
+					seq: ++stepSeq,
 					touchedRoots: [],
 					updatedRoots: [],
 					triggerVNodes: []
 				};
 			}
-			passiveBatchStack.push(batch);
-			const root = getRenderRoot(component);
+
+			let root = null;
+			let vnode = null;
+			const cleanupMeta =
+				target && unmountCleanupMeta && unmountCleanupMeta.get(target);
+			if (cleanupMeta) {
+				unmountCleanupMeta.delete(target);
+				root = cleanupMeta.root;
+				vnode = cleanupMeta.vnode;
+			} else if (target && target instanceof Component) {
+				root = getRenderRoot(target);
+				vnode = target._vnode || null;
+			} else if (
+				target &&
+				target._passive &&
+				typeof target._passive == 'object'
+			) {
+				root = getRenderRoot(target._passive);
+				vnode = target._passive._vnode || null;
+			}
+
 			passiveEffectStack.push({
 				root,
-				vnode: vnode || (component && component._vnode) || null
+				vnode,
+				batch,
+				standaloneBatch
 			});
 			if (root && batch.touchedRoots.indexOf(root) === -1) {
 				batch.touchedRoots.push(root);
 			}
-		} else if (phase === 5) {
-			passiveEffectStack.pop();
-			const batch = passiveBatchStack.pop();
-			if (!renderPassStack.length) {
-				finalizePassiveBatch(batch);
+		} else if (phase === 2) {
+			const frame = passiveEffectStack.pop();
+			if (frame && frame.standaloneBatch) {
+				finalizePassiveBatch(frame.standaloneBatch);
 			}
+		} else if (phase === 3) {
+			compactPendingCleanups(null);
+			finalizePassiveBatch(passiveBatchStack.pop());
 		}
 	};
 
-	options._enqueueRender = component => {
-		if (oldEnqueueRender) oldEnqueueRender(component);
-		if (
-			!passiveUpdateStreaks ||
-			!passiveEffectStack.length ||
-			!passiveBatchStack.length
-		) {
+	notifyComponentEnqueued = component => {
+		if (!passiveUpdateStreaks || !passiveEffectStack.length) {
 			return;
 		}
 		const active = passiveEffectStack[passiveEffectStack.length - 1];
 		const targetRoot = getRenderRoot(component);
-		if (active.root && targetRoot === active.root) {
-			const batch = passiveBatchStack[passiveBatchStack.length - 1];
-			if (batch.updatedRoots.indexOf(targetRoot) === -1) {
-				batch.updatedRoots.push(targetRoot);
-				batch.triggerVNodes.push(
+		if (active.root && targetRoot === active.root && active.batch) {
+			if (active.batch.updatedRoots.indexOf(targetRoot) === -1) {
+				active.batch.updatedRoots.push(targetRoot);
+				active.batch.triggerVNodes.push(
 					active.vnode || (component && component._vnode) || null
 				);
 			}
@@ -632,162 +701,166 @@ export function initDebug() {
 
 	options.diffed = vnode => {
 		const { type, _parent: parent } = vnode;
-		// Check if the user passed plain objects as children. Note that we cannot
-		// move this check into `options.vnode` because components can receive
-		// children in any shape they want (e.g.
-		// `<MyJSONFormatter>{{ foo: 123, bar: "abc" }}</MyJSONFormatter>`).
-		// Putting this check in `options.diffed` ensures that
-		// `vnode._children` is set and that we only validate the children
-		// that were actually rendered.
-		if (vnode._children) {
-			vnode._children.forEach(child => {
-				if (typeof child === 'object' && child && child.type === undefined) {
-					const keys = Object.keys(child).join(',');
-					throw new Error(
-						`Objects are not valid as a child. Encountered an object with the keys {${keys}}.` +
-							`\n\n${getOwnerStack(vnode)}`
-					);
-				}
-			});
-		}
+		try {
+			// Check if the user passed plain objects as children. Note that we cannot
+			// move this check into `options.vnode` because components can receive
+			// children in any shape they want (e.g.
+			// `<MyJSONFormatter>{{ foo: 123, bar: "abc" }}</MyJSONFormatter>`).
+			// Putting this check in `options.diffed` ensures that
+			// `vnode._children` is set and that we only validate the children
+			// that were actually rendered.
+			if (vnode._children) {
+				vnode._children.forEach(child => {
+					if (typeof child === 'object' && child && child.type === undefined) {
+						const keys = Object.keys(child).join(',');
+						throw new Error(
+							`Objects are not valid as a child. Encountered an object with the keys {${keys}}.` +
+								`\n\n${getOwnerStack(vnode)}`
+						);
+					}
+				});
+			}
 
-		if (vnode._component === currentComponent) {
-			renderCount = 0;
-		}
+			if (vnode._component === currentComponent) {
+				renderCount = 0;
+			}
 
-		if (
-			typeof type === 'string' &&
-			(isTableElement(type) ||
-				type === 'p' ||
-				type === 'a' ||
-				type === 'button')
-		) {
-			// Avoid false positives when Preact only partially rendered the
-			// HTML tree. Whilst we attempt to include the outer DOM in our
-			// validation, this wouldn't work on the server for
-			// `preact-render-to-string`. There we'd otherwise flood the terminal
-			// with false positives, which we'd like to avoid.
-			let domParentName = getClosestDomNodeParentName(parent);
-			if (domParentName !== '' && isTableElement(type)) {
-				if (
-					type === 'table' &&
-					// Tables can be nested inside each other if it's inside a cell.
-					// See https://developer.mozilla.org/en-US/docs/Learn/HTML/Tables/Advanced#nesting_tables
-					domParentName !== 'td' &&
-					isTableElement(domParentName)
-				) {
-					console.error(
-						'Improper nesting of table. Your <table> should not have a table-node parent.' +
-							serializeVNode(vnode) +
-							`\n\n${getOwnerStack(vnode)}`
+			if (
+				typeof type === 'string' &&
+				(isTableElement(type) ||
+					type === 'p' ||
+					type === 'a' ||
+					type === 'button')
+			) {
+				// Avoid false positives when Preact only partially rendered the
+				// HTML tree. Whilst we attempt to include the outer DOM in our
+				// validation, this wouldn't work on the server for
+				// `preact-render-to-string`. There we'd otherwise flood the terminal
+				// with false positives, which we'd like to avoid.
+				let domParentName = getClosestDomNodeParentName(parent);
+				if (domParentName !== '' && isTableElement(type)) {
+					if (
+						type === 'table' &&
+						// Tables can be nested inside each other if it's inside a cell.
+						// See https://developer.mozilla.org/en-US/docs/Learn/HTML/Tables/Advanced#nesting_tables
+						domParentName !== 'td' &&
+						isTableElement(domParentName)
+					) {
+						console.error(
+							'Improper nesting of table. Your <table> should not have a table-node parent.' +
+								serializeVNode(vnode) +
+								`\n\n${getOwnerStack(vnode)}`
+						);
+					} else if (
+						(type === 'thead' || type === 'tfoot' || type === 'tbody') &&
+						domParentName !== 'table'
+					) {
+						console.error(
+							'Improper nesting of table. Your <thead/tbody/tfoot> should have a <table> parent.' +
+								serializeVNode(vnode) +
+								`\n\n${getOwnerStack(vnode)}`
+						);
+					} else if (
+						type === 'tr' &&
+						domParentName !== 'thead' &&
+						domParentName !== 'tfoot' &&
+						domParentName !== 'tbody'
+					) {
+						console.error(
+							'Improper nesting of table. Your <tr> should have a <thead/tbody/tfoot> parent.' +
+								serializeVNode(vnode) +
+								`\n\n${getOwnerStack(vnode)}`
+						);
+					} else if (type === 'td' && domParentName !== 'tr') {
+						console.error(
+							'Improper nesting of table. Your <td> should have a <tr> parent.' +
+								serializeVNode(vnode) +
+								`\n\n${getOwnerStack(vnode)}`
+						);
+					} else if (type === 'th' && domParentName !== 'tr') {
+						console.error(
+							'Improper nesting of table. Your <th> should have a <tr>.' +
+								serializeVNode(vnode) +
+								`\n\n${getOwnerStack(vnode)}`
+						);
+					}
+				} else if (type === 'p') {
+					let illegalDomChildrenTypes = getDomChildren(vnode).filter(
+						childType => ILLEGAL_PARAGRAPH_CHILD_ELEMENTS.test(childType)
 					);
-				} else if (
-					(type === 'thead' || type === 'tfoot' || type === 'tbody') &&
-					domParentName !== 'table'
-				) {
-					console.error(
-						'Improper nesting of table. Your <thead/tbody/tfoot> should have a <table> parent.' +
-							serializeVNode(vnode) +
-							`\n\n${getOwnerStack(vnode)}`
-					);
-				} else if (
-					type === 'tr' &&
-					domParentName !== 'thead' &&
-					domParentName !== 'tfoot' &&
-					domParentName !== 'tbody'
-				) {
-					console.error(
-						'Improper nesting of table. Your <tr> should have a <thead/tbody/tfoot> parent.' +
-							serializeVNode(vnode) +
-							`\n\n${getOwnerStack(vnode)}`
-					);
-				} else if (type === 'td' && domParentName !== 'tr') {
-					console.error(
-						'Improper nesting of table. Your <td> should have a <tr> parent.' +
-							serializeVNode(vnode) +
-							`\n\n${getOwnerStack(vnode)}`
-					);
-				} else if (type === 'th' && domParentName !== 'tr') {
-					console.error(
-						'Improper nesting of table. Your <th> should have a <tr>.' +
-							serializeVNode(vnode) +
-							`\n\n${getOwnerStack(vnode)}`
-					);
-				}
-			} else if (type === 'p') {
-				let illegalDomChildrenTypes = getDomChildren(vnode).filter(childType =>
-					ILLEGAL_PARAGRAPH_CHILD_ELEMENTS.test(childType)
-				);
-				if (illegalDomChildrenTypes.length) {
-					console.error(
-						'Improper nesting of paragraph. Your <p> should not have ' +
-							illegalDomChildrenTypes.join(', ') +
-							' as child-elements.' +
-							serializeVNode(vnode) +
-							`\n\n${getOwnerStack(vnode)}`
-					);
-				}
-			} else if (type === 'a' || type === 'button') {
-				if (getDomChildren(vnode).indexOf(type) !== -1) {
-					console.error(
-						`Improper nesting of interactive content. Your <${type}>` +
-							` should not have other ${type === 'a' ? 'anchor' : 'button'}` +
-							' tags as child-elements.' +
-							serializeVNode(vnode) +
-							`\n\n${getOwnerStack(vnode)}`
-					);
+					if (illegalDomChildrenTypes.length) {
+						console.error(
+							'Improper nesting of paragraph. Your <p> should not have ' +
+								illegalDomChildrenTypes.join(', ') +
+								' as child-elements.' +
+								serializeVNode(vnode) +
+								`\n\n${getOwnerStack(vnode)}`
+						);
+					}
+				} else if (type === 'a' || type === 'button') {
+					if (getDomChildren(vnode).indexOf(type) !== -1) {
+						console.error(
+							`Improper nesting of interactive content. Your <${type}>` +
+								` should not have other ${type === 'a' ? 'anchor' : 'button'}` +
+								' tags as child-elements.' +
+								serializeVNode(vnode) +
+								`\n\n${getOwnerStack(vnode)}`
+						);
+					}
 				}
 			}
-		}
 
-		hooksAllowed = false;
+			hooksAllowed = false;
 
-		if (oldDiffed) oldDiffed(vnode);
+			if (oldDiffed) oldDiffed(vnode);
 
-		if (vnode._children != null) {
-			const keys = [];
-			for (let i = 0; i < vnode._children.length; i++) {
-				const child = vnode._children[i];
-				if (!child || child.key == null) continue;
+			if (vnode._children != null) {
+				const keys = [];
+				for (let i = 0; i < vnode._children.length; i++) {
+					const child = vnode._children[i];
+					if (!child || child.key == null) continue;
 
-				const key = child.key;
-				if (keys.indexOf(key) !== -1) {
-					console.error(
-						'Following component has two or more children with the ' +
-							`same key attribute: "${key}". This may cause glitches and misbehavior ` +
-							'in rendering process. Component: \n\n' +
-							serializeVNode(vnode) +
-							`\n\n${getOwnerStack(vnode)}`
-					);
+					const key = child.key;
+					if (keys.indexOf(key) !== -1) {
+						console.error(
+							'Following component has two or more children with the ' +
+								`same key attribute: "${key}". This may cause glitches and misbehavior ` +
+								'in rendering process. Component: \n\n' +
+								serializeVNode(vnode) +
+								`\n\n${getOwnerStack(vnode)}`
+						);
 
-					// Break early to not spam the console
-					break;
+						// Break early to not spam the console
+						break;
+					}
+
+					keys.push(key);
 				}
-
-				keys.push(key);
 			}
-		}
 
-		if (vnode._component != null && vnode._component.__hooks != null) {
-			// Validate that none of the hooks in this component contain arguments that are NaN.
-			// This is a common mistake that can be hard to debug, so we want to catch it early.
-			const hooks = vnode._component.__hooks._list;
-			if (hooks) {
-				for (let i = 0; i < hooks.length; i += 1) {
-					const hook = hooks[i];
-					if (hook._args) {
-						for (let j = 0; j < hook._args.length; j++) {
-							const arg = hook._args[j];
-							if (isNaN(arg)) {
-								const componentName = getDisplayName(vnode);
-								console.warn(
-									`Invalid argument passed to hook. Hooks should not be called with NaN in the dependency array. Hook index ${i} in component ${componentName} was called with NaN.`
-								);
+			if (vnode._component != null && vnode._component.__hooks != null) {
+				// Validate that none of the hooks in this component contain arguments that are NaN.
+				// This is a common mistake that can be hard to debug, so we want to catch it early.
+				const hooks = vnode._component.__hooks._list;
+				if (hooks) {
+					for (let i = 0; i < hooks.length; i += 1) {
+						const hook = hooks[i];
+						if (hook._args) {
+							for (let j = 0; j < hook._args.length; j++) {
+								const arg = hook._args[j];
+								if (isNaN(arg)) {
+									const componentName = getDisplayName(vnode);
+									console.warn(
+										`Invalid argument passed to hook. Hooks should not be called with NaN in the dependency array. Hook index ${i} in component ${componentName} was called with NaN.`
+									);
+								}
 							}
 						}
 					}
 				}
 			}
+		} finally {
+			if (!parent) popRenderPass(false);
 		}
 	};
 }
@@ -808,7 +881,12 @@ Component.prototype.setState = function (update, callback) {
 		}
 	}
 
-	return setState.call(this, update, callback);
+	const wasDirty = (this._bits & COMPONENT_DIRTY) !== 0;
+	const res = setState.call(this, update, callback);
+	if (!wasDirty && this._bits & COMPONENT_DIRTY && notifyComponentEnqueued) {
+		notifyComponentEnqueued(this);
+	}
+	return res;
 };
 
 function isTableElement(type) {
@@ -843,7 +921,12 @@ Component.prototype.forceUpdate = function (callback) {
 				`\n\n${getOwnerStack(this._vnode)}`
 		);
 	}
-	return forceUpdate.call(this, callback);
+	const wasDirty = (this._bits & COMPONENT_DIRTY) !== 0;
+	const res = forceUpdate.call(this, callback);
+	if (!wasDirty && this._bits & COMPONENT_DIRTY && notifyComponentEnqueued) {
+		notifyComponentEnqueued(this);
+	}
+	return res;
 };
 
 /**

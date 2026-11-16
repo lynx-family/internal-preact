@@ -581,6 +581,13 @@ describe('debug with hooks', () => {
 				return <span>{count}</span>;
 			}
 
+			// Uncaught synchronous render() throw also recovers renderPassStack cleanly.
+			function ThrowSync() {
+				throw new Error('sync boom');
+			}
+			expect(() => render(<ThrowSync />, scratch)).to.throw('sync boom');
+			errors.length = 0;
+
 			// Stack recovered cleanly: exact 51-update threshold still triggers.
 			act(() => render(<Loop limit={51} />, scratch));
 			expect(errors).to.have.lengthOf(1);

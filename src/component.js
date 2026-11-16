@@ -183,7 +183,7 @@ function updateParentDomPointers(vnode) {
  * The render queue
  * @type {Array<import('./internal').Component>}
  */
-export const rerenderQueue = [];
+const rerenderQueue = [];
 
 /*
  * The value of `Component.debounce` must asynchronously invoke the passed in callback. It is
@@ -207,14 +207,13 @@ export function resetRenderCount() {
  */
 export function enqueueRender(c) {
 	'background only';
-	let schedule = false;
-	if (!(c._bits & COMPONENT_DIRTY)) {
-		c._bits |= COMPONENT_DIRTY;
-		rerenderQueue.push(c);
-		if (options._enqueueRender) options._enqueueRender(c);
-		schedule = !rerenderCount++;
-	}
-	if (schedule || prevDebounce != options.debounceRendering) {
+	if (
+		(!(c._bits & COMPONENT_DIRTY) &&
+			(c._bits |= COMPONENT_DIRTY) &&
+			rerenderQueue.push(c) &&
+			!rerenderCount++) ||
+		prevDebounce != options.debounceRendering
+	) {
 		prevDebounce = options.debounceRendering;
 		(prevDebounce || defer)(process);
 	}
@@ -238,7 +237,7 @@ const depthSort = (a, b) => a._vnode._depth - b._vnode._depth;
 /** Flush the render queue by rerendering all queued components */
 export function process() {
 	'background only';
-	if (options._renderPass) options._renderPass(0);
+	if (options._process) options._process(0);
 	try {
 		let c,
 			l = 1;
@@ -265,6 +264,6 @@ export function process() {
 		}
 	} finally {
 		rerenderQueue.length = rerenderCount = 0;
-		if (options._renderPass) options._renderPass(1, rerenderQueue);
+		if (options._process) options._process(1);
 	}
 }

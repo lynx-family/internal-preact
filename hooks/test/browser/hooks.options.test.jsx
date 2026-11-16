@@ -151,40 +151,36 @@ describe('hook options', () => {
 		});
 	});
 
-	it('does not retain _unmountVNode on passive hook state when _passiveEffect is disabled', () => {
-		const prevPassiveEffect = options._passiveEffect;
-		options._passiveEffect = undefined;
+	it('does not attach extra fields on passive hook state during unmount', () => {
+		let effectHookState;
+		const prevDiffed = options.diffed;
+		options.diffed = vnode => {
+			if (prevDiffed) prevDiffed(vnode);
+			const comp = vnode._component;
+			if (comp && comp.__hooks && comp.__hooks._list[0]) {
+				effectHookState = comp.__hooks._list[0];
+			}
+		};
 
 		try {
-			let effectHookState;
-			const prevDiffed = options.diffed;
-			options.diffed = vnode => {
-				if (prevDiffed) prevDiffed(vnode);
-				const comp = vnode._component;
-				if (comp && comp.__hooks && comp.__hooks._list[0]) {
-					effectHookState = comp.__hooks._list[0];
-				}
-			};
-
-			try {
-				function WithCleanup() {
-					useEffect(() => () => {}, []);
-					return <div>cleanup</div>;
-				}
-
-				act(() => {
-					render(<WithCleanup />, scratch);
-				});
-				expect(effectHookState).to.be.an('object');
-
-				render(null, scratch);
-				expect('_unmountVNode' in effectHookState).to.equal(false);
-				act(() => {});
-			} finally {
-				options.diffed = prevDiffed;
+			function WithCleanup() {
+				useEffect(() => () => {}, []);
+				return <div>cleanup</div>;
 			}
+
+			act(() => {
+				render(<WithCleanup />, scratch);
+			});
+			expect(effectHookState).to.be.an('object');
+			const keysBeforeUnmount = Object.keys(effectHookState).sort();
+
+			render(null, scratch);
+			expect(Object.keys(effectHookState).sort()).to.deep.equal(
+				keysBeforeUnmount
+			);
+			act(() => {});
 		} finally {
-			options._passiveEffect = prevPassiveEffect;
+			options.diffed = prevDiffed;
 		}
 	});
 });

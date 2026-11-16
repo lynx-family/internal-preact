@@ -5,11 +5,10 @@ import {
 	beforeCommitSpy,
 	hookSpy,
 	afterDiffSpy,
+	unmountSpy,
 	catchErrorSpy,
-	renderComponentSpy,
-	enqueueRenderSpy,
-	passiveEffectSpy,
-	renderPassSpy
+	processSpy,
+	passiveEffectSpy
 } from '../../../test/_util/optionSpies';
 
 import { createElement, render, Component } from 'preact';
@@ -39,11 +38,10 @@ describe('debug options', () => {
 		beforeCommitSpy.mockClear();
 		hookSpy.mockClear();
 		afterDiffSpy.mockClear();
+		unmountSpy.mockClear();
 		catchErrorSpy.mockClear();
-		renderComponentSpy.mockClear();
-		enqueueRenderSpy.mockClear();
+		processSpy.mockClear();
 		passiveEffectSpy.mockClear();
-		renderPassSpy.mockClear();
 	});
 
 	afterEach(() => {
@@ -145,12 +143,12 @@ describe('debug options', () => {
 		expect(loggedErrors).to.deep.equal([e]);
 	});
 
-	it('should call old renderComponent, _enqueueRender, _renderPass, _commit, and _passiveEffect hooks', () => {
+	it('should call old unmount, _commit, _process, and _passiveEffect hooks', () => {
 		let trigger;
 		function HookApp() {
 			const [count, setCount] = useState(0);
 			trigger = () => setCount(c => c + 1);
-			useEffect(() => {}, [count]);
+			useEffect(() => () => {}, [count]);
 			return <div>{count}</div>;
 		}
 
@@ -158,13 +156,16 @@ describe('debug options', () => {
 			render(<HookApp />, scratch);
 		});
 		expect(beforeCommitSpy).toHaveBeenCalled();
-		expect(renderPassSpy).toHaveBeenCalled();
 		expect(passiveEffectSpy).toHaveBeenCalled();
 
 		act(() => {
 			trigger();
 		});
-		expect(enqueueRenderSpy).toHaveBeenCalled();
-		expect(renderComponentSpy).toHaveBeenCalled();
+		expect(processSpy).toHaveBeenCalled();
+
+		act(() => {
+			render(null, scratch);
+		});
+		expect(unmountSpy).toHaveBeenCalled();
 	});
 });
