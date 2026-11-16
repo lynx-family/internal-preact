@@ -207,13 +207,14 @@ export function resetRenderCount() {
  */
 export function enqueueRender(c) {
 	'background only';
-	if (
-		(!(c._bits & COMPONENT_DIRTY) &&
-			(c._bits |= COMPONENT_DIRTY) &&
-			rerenderQueue.push(c) &&
-			!rerenderCount++) ||
-		prevDebounce != options.debounceRendering
-	) {
+	let schedule = false;
+	if (!(c._bits & COMPONENT_DIRTY)) {
+		c._bits |= COMPONENT_DIRTY;
+		rerenderQueue.push(c);
+		if (options._enqueueRender) options._enqueueRender(c);
+		schedule = !rerenderCount++;
+	}
+	if (schedule || prevDebounce != options.debounceRendering) {
 		prevDebounce = options.debounceRendering;
 		(prevDebounce || defer)(process);
 	}

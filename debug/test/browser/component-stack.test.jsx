@@ -1,5 +1,7 @@
 import { createElement, render, Component } from 'preact';
+import { useState } from 'preact/hooks';
 import { captureOwnerStack } from 'preact/debug';
+import { act } from 'preact/test-utils';
 import { vi } from 'vitest';
 import { setupScratch, teardown } from '../../../test/_util/helpers';
 
@@ -114,5 +116,28 @@ describe('component stack', () => {
 		expect(warnings.join(' ')).to.not.include(
 			'@babel/plugin-transform-react-jsx-source'
 		);
+	});
+
+	it('should preserve the owner stack across scheduled state updates', () => {
+		let capturedStack;
+		let updateChild;
+
+		function Child() {
+			const [count, setCount] = useState(0);
+			updateChild = () => setCount(c => c + 1);
+			capturedStack = captureOwnerStack();
+			return <span>{count}</span>;
+		}
+
+		function Parent() {
+			return <Child />;
+		}
+
+		act(() => render(<Parent />, scratch));
+		expect(capturedStack).to.match(/in Child[\s\S]*in Parent/);
+
+		capturedStack = null;
+		act(() => updateChild());
+		expect(capturedStack).to.match(/in Child[\s\S]*in Parent/);
 	});
 });

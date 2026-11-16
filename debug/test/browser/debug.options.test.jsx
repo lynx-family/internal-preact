@@ -4,12 +4,15 @@ import {
 	beforeDiffSpy,
 	hookSpy,
 	afterDiffSpy,
-	catchErrorSpy
+	catchErrorSpy,
+	renderComponentSpy,
+	enqueueRenderSpy,
+	passiveEffectSpy
 } from '../../../test/_util/optionSpies';
 
 import { createElement, render, Component } from 'preact';
-import { useState } from 'preact/hooks';
-import { setupRerender } from 'preact/test-utils';
+import { useEffect, useState } from 'preact/hooks';
+import { act, setupRerender } from 'preact/test-utils';
 import 'preact/debug';
 import { setupScratch, teardown } from '../../../test/_util/helpers';
 import { vi } from 'vitest';
@@ -34,6 +37,9 @@ describe('debug options', () => {
 		hookSpy.mockClear();
 		afterDiffSpy.mockClear();
 		catchErrorSpy.mockClear();
+		renderComponentSpy.mockClear();
+		enqueueRenderSpy.mockClear();
+		passiveEffectSpy.mockClear();
 	});
 
 	afterEach(() => {
@@ -133,5 +139,26 @@ describe('debug options', () => {
 
 		expect(catchErrorSpy).toHaveBeenCalled();
 		expect(loggedErrors).to.deep.equal([e]);
+	});
+
+	it('should call old renderComponent, _enqueueRender, and _passiveEffect hooks', () => {
+		let trigger;
+		function HookApp() {
+			const [count, setCount] = useState(0);
+			trigger = () => setCount(c => c + 1);
+			useEffect(() => {}, [count]);
+			return <div>{count}</div>;
+		}
+
+		act(() => {
+			render(<HookApp />, scratch);
+		});
+		expect(passiveEffectSpy).toHaveBeenCalled();
+
+		act(() => {
+			trigger();
+		});
+		expect(enqueueRenderSpy).toHaveBeenCalled();
+		expect(renderComponentSpy).toHaveBeenCalled();
 	});
 });

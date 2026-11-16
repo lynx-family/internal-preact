@@ -110,6 +110,7 @@ export function setupComponentStack() {
 	let oldRoot = options._root;
 	let oldVNode = options.vnode;
 	let oldRender = options._render;
+	let oldRenderComponent = options.renderComponent;
 
 	options.diffed = vnode => {
 		if (isPossibleOwner(vnode)) {
@@ -137,6 +138,15 @@ export function setupComponentStack() {
 			ownerStack.length > 0 ? ownerStack[ownerStack.length - 1] : null
 		);
 		if (oldVNode) oldVNode(vnode);
+	};
+
+	options.renderComponent = (newVNode, component) => {
+		// Scheduled component updates clone the vnode while ownerStack is empty,
+		// so restore the previous vnode's owner before diff replaces component._vnode.
+		if (component && component._vnode && ownerMap.has(component._vnode)) {
+			ownerMap.set(newVNode, ownerMap.get(component._vnode));
+		}
+		if (oldRenderComponent) oldRenderComponent(newVNode, component);
 	};
 
 	options._render = vnode => {

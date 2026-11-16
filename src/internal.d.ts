@@ -49,6 +49,17 @@ export interface Options extends preact.Options {
 		vnode: VNode,
 		excessDomChildren: Array<PreactElement | null>
 	): void;
+	/** Attach a hook that is invoked when a component is added to the rerender queue. */
+	_enqueueRender?(component: Component): void;
+	/**
+	 * Attach a hook that is invoked around passive effect batches and individual passive callbacks.
+	 * Phases: 0 = batch start, 1 = effect/cleanup start, 2 = effect/cleanup end, 3 = batch end.
+	 */
+	_passiveEffect?(
+		phase: 0 | 1 | 2 | 3,
+		component?: Component | null,
+		vnode?: VNode | null
+	): void;
 }
 
 export type ComponentChild =

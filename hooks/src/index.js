@@ -67,9 +67,21 @@ options._render = vnode => {
 	if (hooks) {
 		if (previousComponent == currentComponent) {
 			currentComponent._renderCallbacks = [];
-		} else {
-			hooks._pendingEffects.some(invokeCleanup);
-			hooks._pendingEffects.some(invokeEffect);
+		} else if (hooks._pendingEffects.length) {
+			const passiveHook = options._passiveEffect;
+			if (passiveHook) {
+				passiveHook(0);
+				passiveHook(1, currentComponent, vnode);
+			}
+			try {
+				hooks._pendingEffects.some(invokeCleanup);
+				hooks._pendingEffects.some(invokeEffect);
+			} finally {
+				if (passiveHook) {
+					passiveHook(2);
+					passiveHook(3);
+				}
+			}
 			currentIndex = 0;
 		}
 		hooks._pendingEffects = [];
@@ -148,6 +160,7 @@ options.unmount = vnode => {
 						errorParent = errorParent && errorParent._component;
 					}
 					s._passive = errorParent;
+					s._unmountVNode = vnode;
 					afterPaint(unmountCleanups.push(s));
 				} else {
 					invokeCleanup(s);
@@ -446,33 +459,49 @@ export function useId() {
  */
 function flushAfterPaintEffects() {
 	let component;
+	const passiveHook = options._passiveEffect;
+	if (passiveHook) passiveHook(0);
 	// The loop picks up components unmounted by an effect we just invoked, which
 	// don't necessarily schedule a flush of their own.
-	do {
-		// Unmounted components' passive cleanups run before any new passive
-		// effect, mirroring React running all destroys before any create.
-		while ((component = unmountCleanups.shift())) {
-			try {
-				invokeCleanup(component);
-			} catch (e) {
-				component = /** @type {any} */ (component._passive);
-				options._catchError(e, { _parent: component && component._vnode });
+	try {
+		do {
+			// Unmounted components' passive cleanups run before any new passive
+			// effect, mirroring React running all destroys before any create.
+			while ((component = unmountCleanups.shift())) {
+				const parentComp = /** @type {any} */ (component._passive);
+				const unmountVNode = component._unmountVNode;
+				component._unmountVNode = undefined;
+				if (passiveHook) passiveHook(1, parentComp, unmountVNode);
+				try {
+					invokeCleanup(component);
+				} catch (e) {
+					options._catchError(e, { _parent: parentComp && parentComp._vnode });
+				} finally {
+					if (passiveHook) passiveHook(2);
+				}
 			}
-		}
 
-		while ((component = afterPaintEffects.shift())) {
-			const hooks = component.__hooks;
-			if (!component._parentDom || !hooks) continue;
-			try {
-				hooks._pendingEffects.some(invokeCleanup);
-				hooks._pendingEffects.some(invokeEffect);
-				hooks._pendingEffects = [];
-			} catch (e) {
-				hooks._pendingEffects = [];
-				options._catchError(e, component._vnode);
+			while ((component = afterPaintEffects.shift())) {
+				const hooks = component.__hooks;
+				if (!component._parentDom || !hooks || !hooks._pendingEffects.length) {
+					continue;
+				}
+				if (passiveHook) passiveHook(1, component, component._vnode);
+				try {
+					hooks._pendingEffects.some(invokeCleanup);
+					hooks._pendingEffects.some(invokeEffect);
+					hooks._pendingEffects = [];
+				} catch (e) {
+					hooks._pendingEffects = [];
+					options._catchError(e, component._vnode);
+				} finally {
+					if (passiveHook) passiveHook(2);
+				}
 			}
-		}
-	} while (unmountCleanups.length);
+		} while (unmountCleanups.length);
+	} finally {
+		if (passiveHook) passiveHook(3);
+	}
 }
 
 let HAS_RAF = typeof requestAnimationFrame == 'function';

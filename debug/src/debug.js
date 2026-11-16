@@ -53,6 +53,32 @@ function getClosestDomNodeParentName(parent) {
 	return /** @type {string} */ (parent.type);
 }
 
+const PASSIVE_UPDATE_LIMIT = 50;
+
+/**
+ * Resolve the render container for a mounted component, or null if unmounted.
+ * @param {import('./internal').Component | null | undefined} component
+ * @returns {import('./internal').PreactElement | null}
+ */
+function getRenderRoot(component) {
+	if (!component || !component._parentDom) {
+		return null;
+	}
+	let rootVNode = component._vnode;
+	if (!rootVNode) {
+		return null;
+	}
+	while (rootVNode._parent) {
+		rootVNode = rootVNode._parent;
+	}
+	const rootComponent = rootVNode._component;
+	const rootDom = rootComponent && rootComponent._parentDom;
+	if (!rootDom) {
+		return null;
+	}
+	return rootDom.nodeType === DOCUMENT_NODE ? rootDom.documentElement : rootDom;
+}
+
 export function initDebug() {
 	setupComponentStack();
 
@@ -66,6 +92,8 @@ export function initDebug() {
 	let oldCatchError = options._catchError;
 	let oldRoot = options._root;
 	let oldHook = options._hook;
+	let oldPassiveEffect = options._passiveEffect;
+	let oldEnqueueRender = options._enqueueRender;
 	const warnedComponents = !isWeakMapSupported
 		? null
 		: {
@@ -74,6 +102,29 @@ export function initDebug() {
 				lazyPropTypes: new WeakMap()
 			};
 	const deprecations = [];
+	const passiveUpdateStreaks = isWeakMapSupported ? new WeakMap() : null;
+	const passiveBatchStack = [];
+	const passiveEffectStack = [];
+
+	/**
+	 * @param {import('./internal').PreactElement} root
+	 */
+	function resetPassiveUpdateStreak(root) {
+		if (!passiveUpdateStreaks) return;
+		passiveUpdateStreaks.delete(root);
+		for (let i = 0; i < passiveBatchStack.length; i++) {
+			const batch = passiveBatchStack[i];
+			const touchedIdx = batch.touchedRoots.indexOf(root);
+			if (touchedIdx !== -1) {
+				batch.touchedRoots.splice(touchedIdx, 1);
+			}
+			const updatedIdx = batch.updatedRoots.indexOf(root);
+			if (updatedIdx !== -1) {
+				batch.updatedRoots.splice(updatedIdx, 1);
+				batch.triggerVNodes.splice(updatedIdx, 1);
+			}
+		}
+	}
 
 	options._catchError = (error, vnode, oldVNode, errorInfo) => {
 		let component = vnode && vnode._component;
@@ -134,6 +185,14 @@ export function initDebug() {
 			throw new Error(
 				`Expected a valid HTML node as a second argument to render.	Received ${parentNode} instead: render(<${componentName} />, ${parentNode});`
 			);
+		}
+
+		if (vnode == null || typeof vnode == 'boolean') {
+			const root =
+				parentNode.nodeType === DOCUMENT_NODE
+					? parentNode.documentElement
+					: parentNode;
+			if (root) resetPassiveUpdateStreak(root);
 		}
 
 		if (oldRoot) oldRoot(vnode, parentNode);
@@ -271,6 +330,80 @@ export function initDebug() {
 		}
 
 		if (oldHook) oldHook(comp, index, type);
+	};
+
+	options._passiveEffect = (phase, component, vnode) => {
+		if (oldPassiveEffect) oldPassiveEffect(phase, component, vnode);
+		if (!passiveUpdateStreaks) return;
+
+		if (phase === 0) {
+			passiveBatchStack.push({
+				touchedRoots: [],
+				updatedRoots: [],
+				triggerVNodes: []
+			});
+		} else if (phase === 1) {
+			const root = getRenderRoot(component);
+			passiveEffectStack.push({
+				root,
+				vnode: vnode || (component && component._vnode) || null
+			});
+			const batch = passiveBatchStack[passiveBatchStack.length - 1];
+			if (root && batch && batch.touchedRoots.indexOf(root) === -1) {
+				batch.touchedRoots.push(root);
+			}
+		} else if (phase === 2) {
+			passiveEffectStack.pop();
+		} else if (phase === 3) {
+			const batch = passiveBatchStack.pop();
+			if (batch) {
+				for (let i = 0; i < batch.touchedRoots.length; i++) {
+					const root = batch.touchedRoots[i];
+					const updatedIdx = batch.updatedRoots.indexOf(root);
+					if (updatedIdx !== -1) {
+						const nextCount = (passiveUpdateStreaks.get(root) || 0) + 1;
+						if (nextCount > PASSIVE_UPDATE_LIMIT) {
+							passiveUpdateStreaks.delete(root);
+							const triggerVNode = batch.triggerVNodes[updatedIdx];
+							const stack = triggerVNode ? getOwnerStack(triggerVNode) : '';
+							console.error(
+								'Maximum update depth exceeded. This can happen when a component ' +
+									"calls setState inside useEffect, but useEffect either doesn't " +
+									'have a dependency array, or one of the dependencies changes on ' +
+									'every render.' +
+									(stack ? `\n\n${stack}` : '')
+							);
+						} else {
+							passiveUpdateStreaks.set(root, nextCount);
+						}
+					} else {
+						passiveUpdateStreaks.delete(root);
+					}
+				}
+			}
+		}
+	};
+
+	options._enqueueRender = component => {
+		if (oldEnqueueRender) oldEnqueueRender(component);
+		if (
+			!passiveUpdateStreaks ||
+			!passiveEffectStack.length ||
+			!passiveBatchStack.length
+		) {
+			return;
+		}
+		const active = passiveEffectStack[passiveEffectStack.length - 1];
+		const targetRoot = getRenderRoot(component);
+		if (active.root && targetRoot === active.root) {
+			const batch = passiveBatchStack[passiveBatchStack.length - 1];
+			if (batch.updatedRoots.indexOf(targetRoot) === -1) {
+				batch.updatedRoots.push(targetRoot);
+				batch.triggerVNodes.push(
+					active.vnode || (component && component._vnode) || null
+				);
+			}
+		}
 	};
 
 	// Ideally we'd want to print a warning once per component, but we
