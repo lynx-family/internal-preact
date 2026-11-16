@@ -24,12 +24,15 @@ export interface Options extends PreactOptions {
 	_hook?(component: Component, index: number, type: HookType): void;
 	/**
 	 * Attach a hook that is invoked around passive effect batches and individual passive callbacks.
-	 * Phases: 0 = batch start, 1 = effect/cleanup start, 2 = effect/cleanup end, 3 = batch end.
+	 * Phases: 0 = batch start, 1 = after-paint callback start, 2 = after-paint callback end,
+	 * 3 = batch end, 4 = pre-render callback start, 5 = pre-render callback end.
 	 */
 	_passiveEffect?(
-		phase: 0 | 1 | 2 | 3,
+		phase: 0 | 1 | 2 | 3 | 4 | 5,
 		component?: Component | null,
-		vnode?: VNode | null
+		vnode?: VNode | null,
+		effectsQueue?: Component[],
+		cleanupsQueue?: EffectHookState[]
 	): void;
 }
 

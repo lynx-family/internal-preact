@@ -18,6 +18,7 @@ let oldCatchError = options._catchError;
 let oldRenderComponent = options.renderComponent;
 let oldEnqueueRender = options._enqueueRender;
 let oldPassiveEffect = options._passiveEffect;
+let oldRenderPass = options._renderPass;
 
 export const vnodeSpy = vi.fn(oldVNode);
 export const eventSpy = vi.fn(oldEvent);
@@ -33,6 +34,7 @@ export const catchErrorSpy = vi.fn(oldCatchError);
 export const renderComponentSpy = vi.fn(oldRenderComponent);
 export const enqueueRenderSpy = vi.fn(oldEnqueueRender);
 export const passiveEffectSpy = vi.fn(oldPassiveEffect);
+export const renderPassSpy = vi.fn(oldRenderPass);
 
 options.vnode = vnodeSpy;
 options.event = eventSpy;
@@ -47,3 +49,4 @@ options._catchError = catchErrorSpy;
 options.renderComponent = renderComponentSpy;
 options._enqueueRender = enqueueRenderSpy;
 options._passiveEffect = passiveEffectSpy;
+options._renderPass = renderPassSpy;

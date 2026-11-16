@@ -70,17 +70,19 @@ options._render = vnode => {
 		} else if (hooks._pendingEffects.length) {
 			const passiveHook = options._passiveEffect;
 			if (passiveHook) {
-				passiveHook(0);
-				passiveHook(1, currentComponent, vnode);
+				passiveHook(
+					4,
+					currentComponent,
+					vnode,
+					afterPaintEffects,
+					unmountCleanups
+				);
 			}
 			try {
 				hooks._pendingEffects.some(invokeCleanup);
 				hooks._pendingEffects.some(invokeEffect);
 			} finally {
-				if (passiveHook) {
-					passiveHook(2);
-					passiveHook(3);
-				}
+				if (passiveHook) passiveHook(5);
 			}
 			currentIndex = 0;
 		}
@@ -160,7 +162,7 @@ options.unmount = vnode => {
 						errorParent = errorParent && errorParent._component;
 					}
 					s._passive = errorParent;
-					s._unmountVNode = vnode;
+					if (options._passiveEffect) s._unmountVNode = vnode;
 					afterPaint(unmountCleanups.push(s));
 				} else {
 					invokeCleanup(s);
@@ -460,7 +462,9 @@ export function useId() {
 function flushAfterPaintEffects() {
 	let component;
 	const passiveHook = options._passiveEffect;
-	if (passiveHook) passiveHook(0);
+	if (passiveHook) {
+		passiveHook(0, null, null, afterPaintEffects, unmountCleanups);
+	}
 	// The loop picks up components unmounted by an effect we just invoked, which
 	// don't necessarily schedule a flush of their own.
 	try {
@@ -469,9 +473,11 @@ function flushAfterPaintEffects() {
 			// effect, mirroring React running all destroys before any create.
 			while ((component = unmountCleanups.shift())) {
 				const parentComp = /** @type {any} */ (component._passive);
-				const unmountVNode = component._unmountVNode;
-				component._unmountVNode = undefined;
-				if (passiveHook) passiveHook(1, parentComp, unmountVNode);
+				if (passiveHook) {
+					const unmountVNode = component._unmountVNode;
+					component._unmountVNode = undefined;
+					passiveHook(1, parentComp, unmountVNode);
+				}
 				try {
 					invokeCleanup(component);
 				} catch (e) {

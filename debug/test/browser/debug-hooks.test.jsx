@@ -280,7 +280,7 @@ describe('debug with hooks', () => {
 			expect(errors).to.deep.equal([]);
 		});
 
-		it('counts at most once per root per batch when multiple setters fire', () => {
+		it('counts at most once per root per batch when multiple setters or components update', () => {
 			function MultiSetter() {
 				const [a, setA] = useState(0);
 				const [b, setB] = useState(0);
@@ -303,6 +303,39 @@ describe('debug with hooks', () => {
 
 			act(() => render(<MultiSetter />, scratch));
 			expect(scratch.textContent).to.equal('30-30-30');
+			expect(errors).to.deep.equal([]);
+
+			act(() => render(null, scratch));
+
+			// Distinct sibling components each inserting into rerenderQueue in the
+			// same passive batch (20 batches * 4 components = 80 queue insertions).
+			function SiblingWorker({ id }) {
+				const [step, setStep] = useState(0);
+				useEffect(() => {
+					if (step < 20) {
+						setStep(s => s + 1);
+					}
+				}, [step]);
+				return (
+					<span>
+						{id}:{step};
+					</span>
+				);
+			}
+
+			function MultiComponentBatchApp() {
+				return (
+					<div>
+						<SiblingWorker id="a" />
+						<SiblingWorker id="b" />
+						<SiblingWorker id="c" />
+						<SiblingWorker id="d" />
+					</div>
+				);
+			}
+
+			act(() => render(<MultiComponentBatchApp />, scratch));
+			expect(scratch.textContent).to.equal('a:20;b:20;c:20;d:20;');
 			expect(errors).to.deep.equal([]);
 		});
 
@@ -560,6 +593,149 @@ describe('debug with hooks', () => {
 			act(() => render(<Loop limit={40} unmountAt={40} />, scratch));
 			act(() => render(<Loop limit={40} />, scratch));
 			expect(errors).to.deep.equal([]);
+		});
+
+		it('shares a single batch across sibling pre-render passive flushes in one render pass', () => {
+			teardownAct();
+			const prevRaf = options.requestAnimationFrame;
+			const prevDebounce = options.debounceRendering;
+			const scheduledFlushes = [];
+			let drainQueue;
+			options.requestAnimationFrame = cb => scheduledFlushes.push(cb);
+			options.debounceRendering = cb => {
+				drainQueue = cb;
+			};
+
+			try {
+				const setters = [];
+				function SiblingItem({ index, step }) {
+					const [ready, setReady] = useState(false);
+					const [, setBump] = useState(0);
+					setters[index] = () => setBump(v => v + 1);
+					useEffect(() => {
+						setReady(true);
+					}, []);
+					return (
+						<span>
+							{step}:{ready ? '1' : '0'}
+						</span>
+					);
+				}
+
+				function SiblingList({ step }) {
+					const items = [];
+					for (let i = 0; i < 55; i++) {
+						items.push(<SiblingItem key={i} index={i} step={step} />);
+					}
+					return <div>{items}</div>;
+				}
+
+				// 1) Synchronous second render() before afterPaint: 55 siblings flush
+				// their mount effect in one render pass -> counts once, not 55 times.
+				render(<SiblingList step={0} />, scratch);
+				render(<SiblingList step={1} />, scratch);
+				while (scheduledFlushes.length) scheduledFlushes.shift()();
+				if (drainQueue) drainQueue();
+				expect(errors).to.deep.equal([]);
+
+				render(null, scratch);
+				while (scheduledFlushes.length) scheduledFlushes.shift()();
+
+				// 2) Individually dirtied siblings drained in one process() pass before
+				// afterPaint runs -> also shares a single render-pass batch.
+				render(<SiblingList step={0} />, scratch);
+				for (let i = 0; i < 55; i++) {
+					setters[i]();
+				}
+				if (drainQueue) drainQueue();
+				while (scheduledFlushes.length) scheduledFlushes.shift()();
+				if (drainQueue) drainQueue();
+				expect(errors).to.deep.equal([]);
+
+				render(null, scratch);
+				while (scheduledFlushes.length) scheduledFlushes.shift()();
+
+				// 3) An idle sibling in the same pre-render pass does not reset an
+				// active pre-render loop on the same root.
+				function IdleSibling({ tick }) {
+					useEffect(() => {}, [tick]);
+					return null;
+				}
+				function LoopingSibling() {
+					const [count, setCount] = useState(0);
+					useEffect(() => {
+						setCount(c => c + 1);
+					});
+					return <span>{count}</span>;
+				}
+				function MixedPreRenderApp({ tick }) {
+					return (
+						<div>
+							<LoopingSibling tick={tick} />
+							<IdleSibling tick={tick} />
+						</div>
+					);
+				}
+
+				for (let i = 0; i <= 51; i++) {
+					render(<MixedPreRenderApp tick={i} />, scratch);
+				}
+				expect(errors).to.have.lengthOf(1);
+				expect(errors[0]).to.include('Maximum update depth exceeded');
+			} finally {
+				options.requestAnimationFrame = prevRaf;
+				options.debounceRendering = prevDebounce;
+				render(null, scratch);
+				while (scheduledFlushes.length) scheduledFlushes.shift()();
+				if (drainQueue) drainQueue();
+			}
+		});
+
+		it('resets the streak when follow-up renders settle without scheduling new passive effects', async () => {
+			function SyncedProp({ value }) {
+				const [local, setLocal] = useState(value);
+				useEffect(() => {
+					setLocal(value);
+				}, [value]);
+				return <span>{local}</span>;
+			}
+
+			// 55 sequential prop changes under act(), each settling completely.
+			act(() => render(<SyncedProp value={0} />, scratch));
+			for (let i = 1; i <= 55; i++) {
+				act(() => render(<SyncedProp value={i} />, scratch));
+				expect(scratch.textContent).to.equal(String(i));
+			}
+			expect(errors).to.deep.equal([]);
+
+			act(() => render(null, scratch));
+
+			// Also verify under real microtask scheduling (matching Lynx background runtime).
+			teardownAct();
+			const prevRaf = options.requestAnimationFrame;
+			options.requestAnimationFrame = queueMicrotask;
+			try {
+				render(<SyncedProp value={0} />, scratch);
+				await new Promise(resolve => setTimeout(resolve, 0));
+
+				for (let i = 1; i <= 55; i++) {
+					render(<SyncedProp value={i} />, scratch);
+					for (
+						let tick = 0;
+						tick < 10 && scratch.textContent !== String(i);
+						tick++
+					) {
+						await new Promise(resolve => queueMicrotask(resolve));
+					}
+					await new Promise(resolve => queueMicrotask(resolve));
+					expect(scratch.textContent).to.equal(String(i));
+				}
+				expect(errors).to.deep.equal([]);
+			} finally {
+				options.requestAnimationFrame = prevRaf;
+				render(null, scratch);
+				await new Promise(resolve => queueMicrotask(resolve));
+			}
 		});
 	});
 });

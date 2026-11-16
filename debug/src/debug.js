@@ -3,7 +3,8 @@ import { options, Component } from 'preact';
 import {
 	ELEMENT_NODE,
 	DOCUMENT_NODE,
-	DOCUMENT_FRAGMENT_NODE
+	DOCUMENT_FRAGMENT_NODE,
+	COMPONENT_DIRTY
 } from './constants';
 import {
 	getOwnerStack,
@@ -92,8 +93,10 @@ export function initDebug() {
 	let oldCatchError = options._catchError;
 	let oldRoot = options._root;
 	let oldHook = options._hook;
+	let oldCommit = options._commit;
 	let oldPassiveEffect = options._passiveEffect;
 	let oldEnqueueRender = options._enqueueRender;
+	let oldRenderPass = options._renderPass;
 	const warnedComponents = !isWeakMapSupported
 		? null
 		: {
@@ -105,6 +108,22 @@ export function initDebug() {
 	const passiveUpdateStreaks = isWeakMapSupported ? new WeakMap() : null;
 	const passiveBatchStack = [];
 	const passiveEffectStack = [];
+	const renderPassStack = [];
+	let pendingEffectsQueue = null;
+	let pendingCleanupsQueue = null;
+
+	function cleanBatchRoot(batch, root) {
+		if (!batch) return;
+		const touchedIdx = batch.touchedRoots.indexOf(root);
+		if (touchedIdx !== -1) {
+			batch.touchedRoots.splice(touchedIdx, 1);
+		}
+		const updatedIdx = batch.updatedRoots.indexOf(root);
+		if (updatedIdx !== -1) {
+			batch.updatedRoots.splice(updatedIdx, 1);
+			batch.triggerVNodes.splice(updatedIdx, 1);
+		}
+	}
 
 	/**
 	 * @param {import('./internal').PreactElement} root
@@ -113,17 +132,95 @@ export function initDebug() {
 		if (!passiveUpdateStreaks) return;
 		passiveUpdateStreaks.delete(root);
 		for (let i = 0; i < passiveBatchStack.length; i++) {
-			const batch = passiveBatchStack[i];
-			const touchedIdx = batch.touchedRoots.indexOf(root);
-			if (touchedIdx !== -1) {
-				batch.touchedRoots.splice(touchedIdx, 1);
-			}
-			const updatedIdx = batch.updatedRoots.indexOf(root);
-			if (updatedIdx !== -1) {
-				batch.updatedRoots.splice(updatedIdx, 1);
-				batch.triggerVNodes.splice(updatedIdx, 1);
+			cleanBatchRoot(passiveBatchStack[i], root);
+		}
+		for (let i = 0; i < renderPassStack.length; i++) {
+			cleanBatchRoot(renderPassStack[i].preRenderBatch, root);
+			const committedIdx = renderPassStack[i].committedRoots.indexOf(root);
+			if (committedIdx !== -1) {
+				renderPassStack[i].committedRoots.splice(committedIdx, 1);
 			}
 		}
+	}
+
+	function finalizePassiveBatch(batch) {
+		if (!batch) return;
+		for (let i = 0; i < batch.touchedRoots.length; i++) {
+			const root = batch.touchedRoots[i];
+			const updatedIdx = batch.updatedRoots.indexOf(root);
+			if (updatedIdx !== -1) {
+				const nextCount = (passiveUpdateStreaks.get(root) || 0) + 1;
+				if (nextCount > PASSIVE_UPDATE_LIMIT) {
+					passiveUpdateStreaks.delete(root);
+					const triggerVNode = batch.triggerVNodes[updatedIdx];
+					const stack = triggerVNode ? getOwnerStack(triggerVNode) : '';
+					console.error(
+						'Maximum update depth exceeded. This can happen when a component ' +
+							"calls setState inside useEffect, but useEffect either doesn't " +
+							'have a dependency array, or one of the dependencies changes on ' +
+							'every render.' +
+							(stack ? `\n\n${stack}` : '')
+					);
+				} else {
+					passiveUpdateStreaks.set(root, nextCount);
+				}
+			} else {
+				passiveUpdateStreaks.delete(root);
+			}
+		}
+	}
+
+	function hasPendingPassiveOrRenderWork(root, rerenderQueue) {
+		for (let i = 0; i < passiveEffectStack.length; i++) {
+			if (passiveEffectStack[i].root === root) return true;
+		}
+		for (let i = 0; i < passiveBatchStack.length; i++) {
+			const batch = passiveBatchStack[i];
+			if (
+				batch.touchedRoots.indexOf(root) !== -1 ||
+				batch.updatedRoots.indexOf(root) !== -1
+			) {
+				return true;
+			}
+		}
+		if (rerenderQueue) {
+			for (let i = 0; i < rerenderQueue.length; i++) {
+				const comp = rerenderQueue[i];
+				if (
+					comp &&
+					comp._bits & COMPONENT_DIRTY &&
+					getRenderRoot(comp) === root
+				) {
+					return true;
+				}
+			}
+		}
+		if (pendingEffectsQueue) {
+			for (let i = 0; i < pendingEffectsQueue.length; i++) {
+				const comp = pendingEffectsQueue[i];
+				if (
+					comp &&
+					comp.__hooks &&
+					comp.__hooks._pendingEffects.length &&
+					getRenderRoot(comp) === root
+				) {
+					return true;
+				}
+			}
+		}
+		if (pendingCleanupsQueue) {
+			for (let i = 0; i < pendingCleanupsQueue.length; i++) {
+				const hookState = pendingCleanupsQueue[i];
+				if (
+					hookState &&
+					typeof hookState._cleanup == 'function' &&
+					getRenderRoot(hookState._passive) === root
+				) {
+					return true;
+				}
+			}
+		}
+		return false;
 	}
 
 	options._catchError = (error, vnode, oldVNode, errorInfo) => {
@@ -332,9 +429,77 @@ export function initDebug() {
 		if (oldHook) oldHook(comp, index, type);
 	};
 
-	options._passiveEffect = (phase, component, vnode) => {
-		if (oldPassiveEffect) oldPassiveEffect(phase, component, vnode);
+	options._commit = (vnode, commitQueue) => {
+		if (passiveUpdateStreaks && renderPassStack.length) {
+			const root = getRenderRoot(vnode && vnode._component);
+			const pass = renderPassStack[renderPassStack.length - 1];
+			if (root && pass.committedRoots.indexOf(root) === -1) {
+				pass.committedRoots.push(root);
+			}
+		}
+		if (oldCommit) oldCommit(vnode, commitQueue);
+	};
+
+	options._renderPass = (phase, rerenderQueue) => {
+		if (oldRenderPass) oldRenderPass(phase, rerenderQueue);
 		if (!passiveUpdateStreaks) return;
+
+		if (phase === 0) {
+			renderPassStack.push({
+				preRenderBatch: null,
+				committedRoots: []
+			});
+		} else if (phase === 1) {
+			const pass = renderPassStack.pop();
+			if (!pass) return;
+
+			if (pass.preRenderBatch) {
+				for (let i = 0; i < pass.preRenderBatch.touchedRoots.length; i++) {
+					const root = pass.preRenderBatch.touchedRoots[i];
+					if (pass.committedRoots.indexOf(root) === -1) {
+						pass.committedRoots.push(root);
+					}
+				}
+				finalizePassiveBatch(pass.preRenderBatch);
+			}
+
+			if (renderPassStack.length) {
+				const parentPass = renderPassStack[renderPassStack.length - 1];
+				for (let i = 0; i < pass.committedRoots.length; i++) {
+					const root = pass.committedRoots[i];
+					if (parentPass.committedRoots.indexOf(root) === -1) {
+						parentPass.committedRoots.push(root);
+					}
+				}
+			} else {
+				for (let i = 0; i < pass.committedRoots.length; i++) {
+					const root = pass.committedRoots[i];
+					if (
+						passiveUpdateStreaks.has(root) &&
+						!hasPendingPassiveOrRenderWork(root, rerenderQueue)
+					) {
+						passiveUpdateStreaks.delete(root);
+					}
+				}
+			}
+		}
+	};
+
+	options._passiveEffect = (
+		phase,
+		component,
+		vnode,
+		effectsQueue,
+		cleanupsQueue
+	) => {
+		if (oldPassiveEffect) {
+			oldPassiveEffect(phase, component, vnode, effectsQueue, cleanupsQueue);
+		}
+		if (!passiveUpdateStreaks) return;
+		if (effectsQueue) {
+			pendingEffectsQueue = effectsQueue;
+			pendingCleanupsQueue = cleanupsQueue;
+		}
 
 		if (phase === 0) {
 			passiveBatchStack.push({
@@ -355,31 +520,40 @@ export function initDebug() {
 		} else if (phase === 2) {
 			passiveEffectStack.pop();
 		} else if (phase === 3) {
-			const batch = passiveBatchStack.pop();
-			if (batch) {
-				for (let i = 0; i < batch.touchedRoots.length; i++) {
-					const root = batch.touchedRoots[i];
-					const updatedIdx = batch.updatedRoots.indexOf(root);
-					if (updatedIdx !== -1) {
-						const nextCount = (passiveUpdateStreaks.get(root) || 0) + 1;
-						if (nextCount > PASSIVE_UPDATE_LIMIT) {
-							passiveUpdateStreaks.delete(root);
-							const triggerVNode = batch.triggerVNodes[updatedIdx];
-							const stack = triggerVNode ? getOwnerStack(triggerVNode) : '';
-							console.error(
-								'Maximum update depth exceeded. This can happen when a component ' +
-									"calls setState inside useEffect, but useEffect either doesn't " +
-									'have a dependency array, or one of the dependencies changes on ' +
-									'every render.' +
-									(stack ? `\n\n${stack}` : '')
-							);
-						} else {
-							passiveUpdateStreaks.set(root, nextCount);
-						}
-					} else {
-						passiveUpdateStreaks.delete(root);
-					}
+			finalizePassiveBatch(passiveBatchStack.pop());
+		} else if (phase === 4) {
+			const pass = renderPassStack[renderPassStack.length - 1];
+			let batch;
+			if (pass) {
+				if (!pass.preRenderBatch) {
+					pass.preRenderBatch = {
+						touchedRoots: [],
+						updatedRoots: [],
+						triggerVNodes: []
+					};
 				}
+				batch = pass.preRenderBatch;
+			} else {
+				batch = {
+					touchedRoots: [],
+					updatedRoots: [],
+					triggerVNodes: []
+				};
+			}
+			passiveBatchStack.push(batch);
+			const root = getRenderRoot(component);
+			passiveEffectStack.push({
+				root,
+				vnode: vnode || (component && component._vnode) || null
+			});
+			if (root && batch.touchedRoots.indexOf(root) === -1) {
+				batch.touchedRoots.push(root);
+			}
+		} else if (phase === 5) {
+			passiveEffectStack.pop();
+			const batch = passiveBatchStack.pop();
+			if (!renderPassStack.length) {
+				finalizePassiveBatch(batch);
 			}
 		}
 	};

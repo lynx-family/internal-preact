@@ -150,4 +150,41 @@ describe('hook options', () => {
 			expect(spy).not.toHaveBeenCalled();
 		});
 	});
+
+	it('does not retain _unmountVNode on passive hook state when _passiveEffect is disabled', () => {
+		const prevPassiveEffect = options._passiveEffect;
+		options._passiveEffect = undefined;
+
+		try {
+			let effectHookState;
+			const prevDiffed = options.diffed;
+			options.diffed = vnode => {
+				if (prevDiffed) prevDiffed(vnode);
+				const comp = vnode._component;
+				if (comp && comp.__hooks && comp.__hooks._list[0]) {
+					effectHookState = comp.__hooks._list[0];
+				}
+			};
+
+			try {
+				function WithCleanup() {
+					useEffect(() => () => {}, []);
+					return <div>cleanup</div>;
+				}
+
+				act(() => {
+					render(<WithCleanup />, scratch);
+				});
+				expect(effectHookState).to.be.an('object');
+
+				render(null, scratch);
+				expect('_unmountVNode' in effectHookState).to.equal(false);
+				act(() => {});
+			} finally {
+				options.diffed = prevDiffed;
+			}
+		} finally {
+			options._passiveEffect = prevPassiveEffect;
+		}
+	});
 });

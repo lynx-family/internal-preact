@@ -183,7 +183,7 @@ function updateParentDomPointers(vnode) {
  * The render queue
  * @type {Array<import('./internal').Component>}
  */
-const rerenderQueue = [];
+export const rerenderQueue = [];
 
 /*
  * The value of `Component.debounce` must asynchronously invoke the passed in callback. It is
@@ -238,6 +238,7 @@ const depthSort = (a, b) => a._vnode._depth - b._vnode._depth;
 /** Flush the render queue by rerendering all queued components */
 export function process() {
 	'background only';
+	if (options._renderPass) options._renderPass(0);
 	try {
 		let c,
 			l = 1;
@@ -264,5 +265,6 @@ export function process() {
 		}
 	} finally {
 		rerenderQueue.length = rerenderCount = 0;
+		if (options._renderPass) options._renderPass(1, rerenderQueue);
 	}
 }
