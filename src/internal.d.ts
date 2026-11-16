@@ -49,13 +49,27 @@ export interface Options extends preact.Options {
 		vnode: VNode,
 		excessDomChildren: Array<PreactElement | null>
 	): void;
-	/** Attach a hook that brackets a queued process() flush (0 = start, 1 = end). */
-	_process?(phase: 0 | 1): void;
+	/** Attach a hook that is invoked when a component enters the rerender queue. */
+	_enqueueRender?(component: Component): void;
 	/**
-	 * Attach a hook that brackets passive effect batches (0 = start, 3 = end)
-	 * and individual passive callbacks (1 = start, 2 = end).
+	 * Attach a hook that brackets a top-level `render()` (`isQueueFlush = false`)
+	 * or queued `process()` (`isQueueFlush = true`) pass (`0` = start, `1` = end).
 	 */
-	_passiveEffect?(phase: 0 | 1 | 2 | 3, target?: unknown): void;
+	_renderPass?(phase: 0 | 1, isQueueFlush: boolean): void;
+	/**
+	 * Attach a hook that observes passive effect execution scopes:
+	 * - `0` / `3`: start and end of an after-paint passive flush batch.
+	 * - `1` / `2`: start and end of a component-level passive execution scope
+	 *   (all pending cleanup/setup callbacks of a mounted component, or all
+	 *   deferred unmount cleanups of an unmounted component), with `vnode` set
+	 *   to that component's owner VNode and `component` set to the mounted
+	 *   component (or nearest mounted ancestor for deferred unmount cleanups).
+	 */
+	_passiveEffect?(
+		phase: 0 | 1 | 2 | 3,
+		vnode?: VNode | null,
+		component?: Component | null
+	): void;
 }
 
 export type ComponentChild =

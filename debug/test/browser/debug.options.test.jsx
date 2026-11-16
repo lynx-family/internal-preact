@@ -7,12 +7,13 @@ import {
 	afterDiffSpy,
 	unmountSpy,
 	catchErrorSpy,
-	processSpy,
+	enqueueRenderSpy,
+	renderPassSpy,
 	passiveEffectSpy
 } from '../../../test/_util/optionSpies';
 
-import { createElement, render, Component } from 'preact';
-import { useEffect, useState } from 'preact/hooks';
+import { createElement, render, Component, options } from 'preact';
+import { useEffect, useLayoutEffect, useState } from 'preact/hooks';
 import { act, setupRerender } from 'preact/test-utils';
 import 'preact/debug';
 import { setupScratch, teardown } from '../../../test/_util/helpers';
@@ -40,7 +41,8 @@ describe('debug options', () => {
 		afterDiffSpy.mockClear();
 		unmountSpy.mockClear();
 		catchErrorSpy.mockClear();
-		processSpy.mockClear();
+		enqueueRenderSpy.mockClear();
+		renderPassSpy.mockClear();
 		passiveEffectSpy.mockClear();
 	});
 
@@ -143,7 +145,7 @@ describe('debug options', () => {
 		expect(loggedErrors).to.deep.equal([e]);
 	});
 
-	it('should call old unmount, _commit, _process, and _passiveEffect hooks', () => {
+	it('should call old unmount, _commit, _enqueueRender, _renderPass, and _passiveEffect hooks', () => {
 		let trigger;
 		function HookApp() {
 			const [count, setCount] = useState(0);
@@ -156,16 +158,104 @@ describe('debug options', () => {
 			render(<HookApp />, scratch);
 		});
 		expect(beforeCommitSpy).toHaveBeenCalled();
+		expect(renderPassSpy).toHaveBeenCalledWith(0, false);
+		expect(renderPassSpy).toHaveBeenCalledWith(1, false);
 		expect(passiveEffectSpy).toHaveBeenCalled();
 
 		act(() => {
 			trigger();
 		});
-		expect(processSpy).toHaveBeenCalled();
+		expect(enqueueRenderSpy).toHaveBeenCalled();
+		expect(renderPassSpy).toHaveBeenCalledWith(0, true);
+		expect(renderPassSpy).toHaveBeenCalledWith(1, true);
 
 		act(() => {
 			render(null, scratch);
 		});
 		expect(unmountSpy).toHaveBeenCalled();
+	});
+
+	it('delivers paired _renderPass and _passiveEffect events when listeners are replaced mid-pass', () => {
+		const prevRenderPass = options._renderPass;
+		const prevPassiveEffect = options._passiveEffect;
+		const renderPassEventsA = [];
+		const renderPassEventsB = [];
+		const passiveEventsA = [];
+		const passiveEventsB = [];
+
+		options._renderPass = (phase, isFlush) => {
+			renderPassEventsA.push([phase, isFlush]);
+			prevRenderPass(phase, isFlush);
+		};
+		options._passiveEffect = (phase, vnode, comp) => {
+			passiveEventsA.push(phase);
+			prevPassiveEffect(phase, vnode, comp);
+		};
+
+		try {
+			let bump;
+			function SwapDuringCommitAndEffect() {
+				const [n, setN] = useState(0);
+				bump = () => setN(1);
+				useLayoutEffect(() => {
+					// Replace _renderPass mid-commit (during render() on mount, during process() on update).
+					options._renderPass = (phase, isFlush) => {
+						renderPassEventsB.push([phase, isFlush]);
+						prevRenderPass(phase, isFlush);
+					};
+				}, [n]);
+				useEffect(() => {
+					// Replace _passiveEffect mid-flush.
+					options._passiveEffect = (phase, vnode, comp) => {
+						passiveEventsB.push(phase);
+						prevPassiveEffect(phase, vnode, comp);
+					};
+				}, [n]);
+				return <div>{n}</div>;
+			}
+
+			act(() => {
+				render(<SwapDuringCommitAndEffect />, scratch);
+			});
+			// Listener A received both start and end for the mount render() and mount passive flush;
+			// Listener B never received an unmatched end event.
+			expect(renderPassEventsA).to.deep.equal([
+				[0, false],
+				[1, false]
+			]);
+			expect(renderPassEventsB.length % 2).to.equal(0);
+			for (let i = 0; i < renderPassEventsB.length; i += 2) {
+				expect(renderPassEventsB[i]).to.deep.equal([0, true]);
+				expect(renderPassEventsB[i + 1]).to.deep.equal([1, true]);
+			}
+			expect(passiveEventsA).to.deep.equal([0, 1, 2, 3]);
+			expect(passiveEventsB).to.deep.equal([]);
+
+			// Reset back to A before triggering queued process() update so we test mid-process() swap too.
+			renderPassEventsA.length = 0;
+			renderPassEventsB.length = 0;
+			passiveEventsA.length = 0;
+			options._renderPass = (phase, isFlush) => {
+				renderPassEventsA.push([phase, isFlush]);
+				prevRenderPass(phase, isFlush);
+			};
+
+			act(() => {
+				bump();
+			});
+			expect(renderPassEventsA).to.deep.equal([
+				[0, true],
+				[1, true]
+			]);
+			expect(renderPassEventsB.length % 2).to.equal(0);
+			for (let i = 0; i < renderPassEventsB.length; i += 2) {
+				expect(renderPassEventsB[i]).to.deep.equal([0, true]);
+				expect(renderPassEventsB[i + 1]).to.deep.equal([1, true]);
+			}
+			expect(passiveEventsB).to.deep.equal([0, 1, 2, 3]);
+		} finally {
+			options._renderPass = prevRenderPass;
+			options._passiveEffect = prevPassiveEffect;
+		}
 	});
 });

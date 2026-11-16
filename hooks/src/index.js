@@ -69,12 +69,12 @@ options._render = vnode => {
 			currentComponent._renderCallbacks = [];
 		} else if (hooks._pendingEffects.length) {
 			const passiveHook = options._passiveEffect;
-			if (passiveHook) passiveHook(1, currentComponent);
+			if (passiveHook) passiveHook(1, vnode, currentComponent);
 			try {
 				hooks._pendingEffects.some(invokeCleanup);
 				hooks._pendingEffects.some(invokeEffect);
 			} finally {
-				if (passiveHook) passiveHook(2);
+				if (passiveHook) passiveHook(2, vnode, currentComponent);
 			}
 			currentIndex = 0;
 		}
@@ -154,6 +154,7 @@ options.unmount = vnode => {
 						errorParent = errorParent && errorParent._component;
 					}
 					s._passive = errorParent;
+					if (options._passiveEffect) s._unmountVNode = vnode;
 					afterPaint(unmountCleanups.push(s));
 				} else {
 					invokeCleanup(s);
@@ -462,13 +463,27 @@ function flushAfterPaintEffects() {
 			// effect, mirroring React running all destroys before any create.
 			while ((component = unmountCleanups.shift())) {
 				const parentComp = /** @type {any} */ (component._passive);
-				if (passiveHook) passiveHook(1, component);
+				const unmountVNode = component._unmountVNode || null;
+				component._unmountVNode = undefined;
+				if (passiveHook) passiveHook(1, unmountVNode, parentComp);
 				try {
-					invokeCleanup(component);
-				} catch (e) {
-					options._catchError(e, { _parent: parentComp && parentComp._vnode });
+					do {
+						try {
+							invokeCleanup(component);
+						} catch (e) {
+							options._catchError(e, {
+								_parent: parentComp && parentComp._vnode
+							});
+						}
+					} while (
+						unmountVNode &&
+						unmountCleanups[0] &&
+						unmountCleanups[0]._unmountVNode === unmountVNode &&
+						(component = unmountCleanups.shift()) &&
+						!(component._unmountVNode = undefined)
+					);
 				} finally {
-					if (passiveHook) passiveHook(2);
+					if (passiveHook) passiveHook(2, unmountVNode, parentComp);
 				}
 			}
 
@@ -477,16 +492,17 @@ function flushAfterPaintEffects() {
 				if (!component._parentDom || !hooks || !hooks._pendingEffects.length) {
 					continue;
 				}
-				if (passiveHook) passiveHook(1, component);
+				const vnode = component._vnode;
+				if (passiveHook) passiveHook(1, vnode, component);
 				try {
 					hooks._pendingEffects.some(invokeCleanup);
 					hooks._pendingEffects.some(invokeEffect);
 					hooks._pendingEffects = [];
 				} catch (e) {
 					hooks._pendingEffects = [];
-					options._catchError(e, component._vnode);
+					options._catchError(e, vnode);
 				} finally {
-					if (passiveHook) passiveHook(2);
+					if (passiveHook) passiveHook(2, vnode, component);
 				}
 			}
 		} while (unmountCleanups.length);

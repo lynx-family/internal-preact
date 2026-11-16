@@ -1,5 +1,11 @@
-import { createElement, render, Component, options } from 'preact';
-import { useState, useEffect } from 'preact/hooks';
+import {
+	createElement,
+	createContext,
+	render,
+	Component,
+	options
+} from 'preact';
+import { useState, useEffect, useContext } from 'preact/hooks';
 import 'preact/debug';
 import { act, teardown as teardownAct } from 'preact/test-utils';
 import { setupScratch, teardown } from '../../../test/_util/helpers';
@@ -717,6 +723,57 @@ describe('debug with hooks', () => {
 
 			act(() => render(null, scratch));
 
+			// SCU bailout on a queued component during render() before process() runs
+			// drains rerenderQueue with zero commits in process() and still settles cleanly.
+			teardownAct();
+			const prevDebounce = options.debounceRendering;
+			const prevRafBail = options.requestAnimationFrame;
+			const bailFlushes = [];
+			let drainBailQueue;
+			options.requestAnimationFrame = cb => bailFlushes.push(cb);
+			options.debounceRendering = cb => {
+				drainBailQueue = cb;
+			};
+			try {
+				let bumpChild;
+				class BailingChild extends Component {
+					constructor(props) {
+						super(props);
+						bumpChild = val => this.setState({ x: val });
+					}
+					shouldComponentUpdate() {
+						return false;
+					}
+					render() {
+						return <span>child</span>;
+					}
+				}
+				function TriggerWithBail({ value }) {
+					useEffect(() => {
+						bumpChild(value);
+					}, [value]);
+					return (
+						<div>
+							<BailingChild />
+						</div>
+					);
+				}
+
+				for (let i = 0; i <= 55; i++) {
+					render(<TriggerWithBail value={i} />, scratch);
+					while (bailFlushes.length) bailFlushes.shift()();
+					// Synchronous render() bails out BailingChild via SCU (clearing dirty bit) before process() runs.
+					render(<TriggerWithBail value={i} />, scratch);
+					if (drainBailQueue) drainBailQueue();
+				}
+				expect(errors).to.deep.equal([]);
+			} finally {
+				options.debounceRendering = prevDebounce;
+				options.requestAnimationFrame = prevRafBail;
+			}
+
+			act(() => render(null, scratch));
+
 			// Also verify under real microtask scheduling (matching Lynx background runtime).
 			teardownAct();
 			const prevRaf = options.requestAnimationFrame;
@@ -743,6 +800,48 @@ describe('debug with hooks', () => {
 				render(null, scratch);
 				await new Promise(resolve => queueMicrotask(resolve));
 			}
+		});
+
+		it('tracks direct context subscriber enqueueRender updates triggered from passive effects', () => {
+			const StepContext = createContext(0);
+
+			class MemoShell extends Component {
+				shouldComponentUpdate() {
+					return false;
+				}
+				render() {
+					return <ContextReader />;
+				}
+			}
+
+			function ContextReader() {
+				const value = useContext(StepContext);
+				useEffect(() => {
+					if (value < 55) {
+						render(
+							<StepContext.Provider value={value + 1}>
+								<MemoShell />
+							</StepContext.Provider>,
+							scratch
+						);
+					}
+				}, [value]);
+				return <span>{value}</span>;
+			}
+
+			act(() => {
+				render(
+					<StepContext.Provider value={0}>
+						<MemoShell />
+					</StepContext.Provider>,
+					scratch
+				);
+			});
+
+			expect(scratch.textContent).to.equal('55');
+			expect(errors).to.have.lengthOf(1);
+			expect(errors[0]).to.include('Maximum update depth exceeded');
+			expect(errors[0]).to.include('in ContextReader');
 		});
 	});
 });

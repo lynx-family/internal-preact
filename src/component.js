@@ -207,13 +207,14 @@ export function resetRenderCount() {
  */
 export function enqueueRender(c) {
 	'background only';
-	if (
-		(!(c._bits & COMPONENT_DIRTY) &&
-			(c._bits |= COMPONENT_DIRTY) &&
-			rerenderQueue.push(c) &&
-			!rerenderCount++) ||
-		prevDebounce != options.debounceRendering
-	) {
+	let schedule = false;
+	if (!(c._bits & COMPONENT_DIRTY)) {
+		c._bits |= COMPONENT_DIRTY;
+		rerenderQueue.push(c);
+		if (options._enqueueRender) options._enqueueRender(c);
+		schedule = !rerenderCount++;
+	}
+	if (schedule || prevDebounce != options.debounceRendering) {
 		prevDebounce = options.debounceRendering;
 		(prevDebounce || defer)(process);
 	}
@@ -237,7 +238,8 @@ const depthSort = (a, b) => a._vnode._depth - b._vnode._depth;
 /** Flush the render queue by rerendering all queued components */
 export function process() {
 	'background only';
-	if (options._process) options._process(0);
+	const renderPass = options._renderPass;
+	if (renderPass) renderPass(0, true);
 	try {
 		let c,
 			l = 1;
@@ -264,6 +266,6 @@ export function process() {
 		}
 	} finally {
 		rerenderQueue.length = rerenderCount = 0;
-		if (options._process) options._process(1);
+		if (renderPass) renderPass(1, true);
 	}
 }
