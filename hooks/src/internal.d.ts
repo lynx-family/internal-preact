@@ -22,20 +22,6 @@ export interface Options extends PreactOptions {
 	_unmount?(vnode: VNode): void;
 	/** Attach a hook that is invoked before a hook's state is queried. */
 	_hook?(component: Component, index: number, type: HookType): void;
-	/**
-	 * Attach a hook that observes passive effect execution scopes:
-	 * - `0` / `3`: start and end of an after-paint passive flush batch.
-	 * - `1` / `2`: start and end of a component-level passive execution scope
-	 *   (all pending cleanup/setup callbacks of a mounted component, or all
-	 *   deferred unmount cleanups of an unmounted component), with `vnode` set
-	 *   to that component's owner VNode and `component` set to the mounted
-	 *   component (or nearest mounted ancestor for deferred unmount cleanups).
-	 */
-	_passiveEffect?(
-		phase: 0 | 1 | 2 | 3,
-		vnode?: VNode | null,
-		component?: Component | null
-	): void;
 }
 
 // Hook tracking
@@ -94,8 +80,6 @@ export interface EffectHookState extends BaseHookState {
 	 * cleanup errors are routed to instead.
 	 */
 	_passive?: boolean | Component;
-	/** Unmounted component VNode retained when `_passiveEffect` is enabled until deferred cleanup runs. */
-	_unmountVNode?: VNode;
 }
 
 export interface MemoHookState<T = unknown> extends BaseHookState {

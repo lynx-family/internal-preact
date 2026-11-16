@@ -7,6 +7,7 @@ import {
 } from 'preact';
 import { useState, useEffect, useContext } from 'preact/hooks';
 import 'preact/debug';
+import { flushSync } from 'preact/compat';
 import { act, teardown as teardownAct } from 'preact/test-utils';
 import { setupScratch, teardown } from '../../../test/_util/helpers';
 import { vi } from 'vitest';
@@ -226,7 +227,7 @@ describe('debug with hooks', () => {
 			expect(errors[0]).to.match(/in (CompA|CompB)[\s\S]*in App/);
 		});
 
-		it('tracks updates from passive cleanups and ignores setters on unmounted components', () => {
+		it('leaves deferred unmount cleanups outside the diagnostic', () => {
 			function RemountingChild({ step, onCleanup }) {
 				useEffect(() => () => onCleanup(step), [step]);
 				return <span>{step}</span>;
@@ -252,22 +253,6 @@ describe('debug with hooks', () => {
 			act(() => render(<CleanupLoopApp />, scratch));
 			act(() => kick());
 			expect(scratch.textContent).to.equal('55');
-			expect(errors).to.have.lengthOf(1);
-			expect(errors[0]).to.include('Maximum update depth exceeded');
-			expect(errors[0]).to.match(/in RemountingChild[\s\S]*in CleanupLoopApp/);
-
-			errors.length = 0;
-			act(() => render(null, scratch));
-
-			function UnmountedSelfUpdater({ step }) {
-				const [, setLocal] = useState(0);
-				useEffect(() => () => setLocal(v => v + 1), []);
-				return <span>{step}</span>;
-			}
-
-			for (let i = 0; i < 60; i++) {
-				act(() => render(<UnmountedSelfUpdater key={i} step={i} />, scratch));
-			}
 			expect(errors).to.deep.equal([]);
 		});
 
@@ -393,56 +378,6 @@ describe('debug with hooks', () => {
 			expect(errors).to.deep.equal([]);
 		});
 
-		it('counts pending passive effects flushed synchronously before render without premature reset', () => {
-			teardownAct();
-			const prevRaf = options.requestAnimationFrame;
-			const scheduledFlushes = [];
-			options.requestAnimationFrame = cb => scheduledFlushes.push(cb);
-
-			try {
-				function SyncFlushedChild() {
-					const [count, setCount] = useState(0);
-					useEffect(() => {
-						setCount(c => c + 1);
-					});
-					return <span>{count}</span>;
-				}
-
-				function App({ tick }) {
-					return <SyncFlushedChild tick={tick} />;
-				}
-
-				// First render queues SyncFlushedChild's effect; subsequent renders
-				// flush the previous pending effect synchronously inside options._render.
-				for (let i = 0; i <= 40; i++) {
-					render(<App tick={i} />, scratch);
-				}
-				expect(errors).to.deep.equal([]);
-
-				// Draining afterPaintEffects encounters 1 active flush plus 39 stale
-				// queue entries whose _pendingEffects were already consumed before render.
-				// Skipping empty entries must keep the 41-update streak intact.
-				while (scheduledFlushes.length) {
-					const cb = scheduledFlushes.shift();
-					cb();
-				}
-				expect(errors).to.deep.equal([]);
-
-				for (let i = 41; i <= 51; i++) {
-					render(<App tick={i} />, scratch);
-				}
-				expect(errors).to.have.lengthOf(1);
-				expect(errors[0]).to.include('Maximum update depth exceeded');
-				expect(errors[0]).to.match(/in SyncFlushedChild[\s\S]*in App/);
-			} finally {
-				options.requestAnimationFrame = prevRaf;
-				render(null, scratch);
-				while (scheduledFlushes.length) {
-					scheduledFlushes.shift()();
-				}
-			}
-		});
-
 		it('isolates streaks across independent roots and ignores cross-root updates', () => {
 			const scratch2 = document.createElement('div');
 			document.body.appendChild(scratch2);
@@ -554,11 +489,16 @@ describe('debug with hooks', () => {
 				}
 			}
 
+			let updatedBeforeThrowing = false;
 			function ThrowInEffect() {
+				const [count, setCount] = useState(0);
 				useEffect(() => {
+					if (updatedBeforeThrowing) return;
+					updatedBeforeThrowing = true;
+					flushSync(() => setCount(1));
 					throw new Error('boom');
 				}, []);
-				return <span>ok</span>;
+				return <span>{count}</span>;
 			}
 
 			act(() =>
@@ -587,7 +527,7 @@ describe('debug with hooks', () => {
 				return <span>{count}</span>;
 			}
 
-			// Uncaught synchronous render() throw also recovers renderPassStack cleanly.
+			// A failed explicit render also leaves the next update chain independent.
 			function ThrowSync() {
 				throw new Error('sync boom');
 			}
@@ -608,197 +548,65 @@ describe('debug with hooks', () => {
 			expect(errors).to.deep.equal([]);
 		});
 
-		it('shares a single batch across sibling pre-render passive flushes in one render pass', () => {
-			teardownAct();
+		it('does not count passive effects run synchronously before render', () => {
 			const prevRaf = options.requestAnimationFrame;
-			const prevDebounce = options.debounceRendering;
 			const scheduledFlushes = [];
-			let drainQueue;
 			options.requestAnimationFrame = cb => scheduledFlushes.push(cb);
-			options.debounceRendering = cb => {
-				drainQueue = cb;
-			};
 
 			try {
-				const setters = [];
-				function SiblingItem({ index, step }) {
-					const [ready, setReady] = useState(false);
-					const [, setBump] = useState(0);
-					setters[index] = () => setBump(v => v + 1);
-					useEffect(() => {
-						setReady(true);
-					}, []);
-					return (
-						<span>
-							{step}:{ready ? '1' : '0'}
-						</span>
-					);
-				}
-
-				function SiblingList({ step }) {
-					const items = [];
-					for (let i = 0; i < 55; i++) {
-						items.push(<SiblingItem key={i} index={i} step={step} />);
-					}
-					return <div>{items}</div>;
-				}
-
-				// 1) Synchronous second render() before afterPaint: 55 siblings flush
-				// their mount effect in one render pass -> counts once, not 55 times.
-				render(<SiblingList step={0} />, scratch);
-				render(<SiblingList step={1} />, scratch);
-				while (scheduledFlushes.length) scheduledFlushes.shift()();
-				if (drainQueue) drainQueue();
-				expect(errors).to.deep.equal([]);
-
-				render(null, scratch);
-				while (scheduledFlushes.length) scheduledFlushes.shift()();
-
-				// 2) Individually dirtied siblings drained in one process() pass before
-				// afterPaint runs -> also shares a single render-pass batch.
-				render(<SiblingList step={0} />, scratch);
-				for (let i = 0; i < 55; i++) {
-					setters[i]();
-				}
-				if (drainQueue) drainQueue();
-				while (scheduledFlushes.length) scheduledFlushes.shift()();
-				if (drainQueue) drainQueue();
-				expect(errors).to.deep.equal([]);
-
-				render(null, scratch);
-				while (scheduledFlushes.length) scheduledFlushes.shift()();
-
-				// 3) An idle sibling in the same pre-render pass does not reset an
-				// active pre-render loop on the same root.
-				function IdleSibling({ tick }) {
-					useEffect(() => {}, [tick]);
-					return null;
-				}
-				function LoopingSibling() {
+				function Counter({ tick }) {
 					const [count, setCount] = useState(0);
 					useEffect(() => {
 						setCount(c => c + 1);
-					});
+					}, [tick]);
 					return <span>{count}</span>;
 				}
-				function MixedPreRenderApp({ tick }) {
-					return (
-						<div>
-							<LoopingSibling tick={tick} />
-							<IdleSibling tick={tick} />
-						</div>
-					);
-				}
 
-				for (let i = 0; i <= 51; i++) {
-					render(<MixedPreRenderApp tick={i} />, scratch);
+				for (let tick = 0; tick <= 55; tick++) {
+					render(<Counter tick={tick} />, scratch);
 				}
-				expect(errors).to.have.lengthOf(1);
-				expect(errors[0]).to.include('Maximum update depth exceeded');
+				expect(scratch.textContent).to.equal('55');
+				expect(errors).to.deep.equal([]);
 			} finally {
-				options.requestAnimationFrame = prevRaf;
-				options.debounceRendering = prevDebounce;
 				render(null, scratch);
 				while (scheduledFlushes.length) scheduledFlushes.shift()();
-				if (drainQueue) drainQueue();
+				options.requestAnimationFrame = prevRaf;
 			}
 		});
 
-		it('resets the streak when follow-up renders settle without scheduling new passive effects', async () => {
-			function SyncedProp({ value }) {
-				const [local, setLocal] = useState(value);
-				useEffect(() => {
-					setLocal(value);
-				}, [value]);
-				return <span>{local}</span>;
-			}
-
-			// 55 sequential prop changes under act(), each settling completely.
-			act(() => render(<SyncedProp value={0} />, scratch));
-			for (let i = 1; i <= 55; i++) {
-				act(() => render(<SyncedProp value={i} />, scratch));
-				expect(scratch.textContent).to.equal(String(i));
-			}
-			expect(errors).to.deep.equal([]);
-
-			act(() => render(null, scratch));
-
-			// SCU bailout on a queued component during render() before process() runs
-			// drains rerenderQueue with zero commits in process() and still settles cleanly.
-			teardownAct();
-			const prevDebounce = options.debounceRendering;
-			const prevRafBail = options.requestAnimationFrame;
-			const bailFlushes = [];
-			let drainBailQueue;
-			options.requestAnimationFrame = cb => bailFlushes.push(cb);
-			options.debounceRendering = cb => {
-				drainBailQueue = cb;
-			};
-			try {
-				let bumpChild;
-				class BailingChild extends Component {
-					constructor(props) {
-						super(props);
-						bumpChild = val => this.setState({ x: val });
-					}
-					shouldComponentUpdate() {
-						return false;
-					}
-					render() {
-						return <span>child</span>;
-					}
-				}
-				function TriggerWithBail({ value }) {
-					useEffect(() => {
-						bumpChild(value);
-					}, [value]);
-					return (
-						<div>
-							<BailingChild />
-						</div>
-					);
-				}
-
-				for (let i = 0; i <= 55; i++) {
-					render(<TriggerWithBail value={i} />, scratch);
-					while (bailFlushes.length) bailFlushes.shift()();
-					// Synchronous render() bails out BailingChild via SCU (clearing dirty bit) before process() runs.
-					render(<TriggerWithBail value={i} />, scratch);
-					if (drainBailQueue) drainBailQueue();
-				}
-				expect(errors).to.deep.equal([]);
-			} finally {
-				options.debounceRendering = prevDebounce;
-				options.requestAnimationFrame = prevRafBail;
-			}
-
-			act(() => render(null, scratch));
-
-			// Also verify under real microtask scheduling (matching Lynx background runtime).
+		it('starts a new streak for independent prop or state updates', async () => {
 			teardownAct();
 			const prevRaf = options.requestAnimationFrame;
 			options.requestAnimationFrame = queueMicrotask;
-			try {
-				render(<SyncedProp value={0} />, scratch);
-				await new Promise(resolve => setTimeout(resolve, 0));
 
-				for (let i = 1; i <= 55; i++) {
-					render(<SyncedProp value={i} />, scratch);
-					for (
-						let tick = 0;
-						tick < 10 && scratch.textContent !== String(i);
-						tick++
-					) {
-						await new Promise(resolve => queueMicrotask(resolve));
-					}
-					await new Promise(resolve => queueMicrotask(resolve));
-					expect(scratch.textContent).to.equal(String(i));
+			try {
+				let bump;
+				function SyncedValue({ offset }) {
+					const [value, setValue] = useState(0);
+					const [local, setLocal] = useState(value + offset);
+					bump = () => setValue(v => v + 1);
+					useEffect(() => {
+						setLocal(value + offset);
+					}, [value, offset]);
+					return <span>{local}</span>;
+				}
+
+				// Each external update schedules one follow-up render whose
+				// dependencies are unchanged.
+				for (let offset = 0; offset <= 55; offset++) {
+					render(<SyncedValue offset={offset} />, scratch);
+					await new Promise(resolve => setTimeout(resolve, 0));
+					expect(scratch.textContent).to.equal(String(offset));
+				}
+				for (let value = 1; value <= 55; value++) {
+					bump();
+					await new Promise(resolve => setTimeout(resolve, 0));
+					expect(scratch.textContent).to.equal(String(55 + value));
 				}
 				expect(errors).to.deep.equal([]);
 			} finally {
-				options.requestAnimationFrame = prevRaf;
 				render(null, scratch);
-				await new Promise(resolve => queueMicrotask(resolve));
+				options.requestAnimationFrame = prevRaf;
 			}
 		});
 

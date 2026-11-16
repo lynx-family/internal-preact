@@ -238,8 +238,6 @@ const depthSort = (a, b) => a._vnode._depth - b._vnode._depth;
 /** Flush the render queue by rerendering all queued components */
 export function process() {
 	'background only';
-	const renderPass = options._renderPass;
-	if (renderPass) renderPass(0, true);
 	try {
 		let c,
 			l = 1;
@@ -266,6 +264,5 @@ export function process() {
 		}
 	} finally {
 		rerenderQueue.length = rerenderCount = 0;
-		if (renderPass) renderPass(1, true);
 	}
 }
