@@ -49,6 +49,14 @@ export interface Options extends preact.Options {
 		vnode: VNode,
 		excessDomChildren: Array<PreactElement | null>
 	): void;
+	/** Attach a hook that is invoked when a component enters the rerender queue. */
+	_enqueueRender?(component: Component): void;
+	/**
+	 * Observes a scheduled passive flush (0 = start, 3 = end) and the
+	 * pending cleanup/setup callbacks for a mounted component (1 = start,
+	 * 2 = end). The component is supplied for phases 1 and 2.
+	 */
+	_passiveEffect?(phase: 0 | 1 | 2 | 3, component?: Component): void;
 }
 
 export type ComponentChild =

@@ -15,6 +15,8 @@ let oldBeforeRender = options._render;
 let oldBeforeCommit = options._commit;
 let oldHook = options._hook;
 let oldCatchError = options._catchError;
+let oldEnqueueRender = options._enqueueRender;
+let oldPassiveEffect = options._passiveEffect;
 
 export const vnodeSpy = vi.fn(oldVNode);
 export const eventSpy = vi.fn(oldEvent);
@@ -27,6 +29,8 @@ export const beforeRenderSpy = vi.fn(oldBeforeRender);
 export const beforeCommitSpy = vi.fn(oldBeforeCommit);
 export const hookSpy = vi.fn(oldHook);
 export const catchErrorSpy = vi.fn(oldCatchError);
+export const enqueueRenderSpy = vi.fn(oldEnqueueRender);
+export const passiveEffectSpy = vi.fn(oldPassiveEffect);
 
 options.vnode = vnodeSpy;
 options.event = eventSpy;
@@ -38,3 +42,5 @@ options._render = beforeRenderSpy;
 options._commit = beforeCommitSpy;
 options._hook = hookSpy;
 options._catchError = catchErrorSpy;
+options._enqueueRender = enqueueRenderSpy;
+options._passiveEffect = passiveEffectSpy;

@@ -4,12 +4,14 @@ import {
 	beforeDiffSpy,
 	hookSpy,
 	afterDiffSpy,
-	catchErrorSpy
+	catchErrorSpy,
+	enqueueRenderSpy,
+	passiveEffectSpy
 } from '../../../test/_util/optionSpies';
 
-import { createElement, render, Component } from 'preact';
-import { useState } from 'preact/hooks';
-import { setupRerender } from 'preact/test-utils';
+import { createElement, render, Component, options } from 'preact';
+import { useEffect, useState } from 'preact/hooks';
+import { act, setupRerender } from 'preact/test-utils';
 import 'preact/debug';
 import { setupScratch, teardown } from '../../../test/_util/helpers';
 import { vi } from 'vitest';
@@ -34,6 +36,8 @@ describe('debug options', () => {
 		hookSpy.mockClear();
 		afterDiffSpy.mockClear();
 		catchErrorSpy.mockClear();
+		enqueueRenderSpy.mockClear();
+		passiveEffectSpy.mockClear();
 	});
 
 	afterEach(() => {
@@ -133,5 +137,35 @@ describe('debug options', () => {
 
 		expect(catchErrorSpy).toHaveBeenCalled();
 		expect(loggedErrors).to.deep.equal([e]);
+	});
+
+	it('forwards paired passive events even when the listener changes during a flush', () => {
+		const previous = options._passiveEffect;
+		const replacement = vi.fn(previous);
+
+		try {
+			function HookApp() {
+				const [count, setCount] = useState(0);
+				useEffect(() => {
+					options._passiveEffect = replacement;
+					setCount(1);
+				}, []);
+				return <div>{count}</div>;
+			}
+
+			act(() => render(<HookApp />, scratch));
+			expect(scratch.textContent).to.equal('1');
+			expect(enqueueRenderSpy).toHaveBeenCalledTimes(1);
+			const component = enqueueRenderSpy.mock.calls[0][0];
+			expect(passiveEffectSpy.mock.calls).to.deep.equal([
+				[0, undefined],
+				[1, component],
+				[2, component],
+				[3, undefined]
+			]);
+			expect(replacement).not.toHaveBeenCalled();
+		} finally {
+			options._passiveEffect = previous;
+		}
 	});
 });

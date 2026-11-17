@@ -53,6 +53,32 @@ function getClosestDomNodeParentName(parent) {
 	return /** @type {string} */ (parent.type);
 }
 
+const PASSIVE_UPDATE_LIMIT = 50;
+
+/**
+ * Resolve the render container for a mounted component, or null if unmounted.
+ * @param {import('./internal').Component | null | undefined} component
+ * @returns {import('./internal').PreactElement | null}
+ */
+function getRenderRoot(component) {
+	if (!component || !component._parentDom) {
+		return null;
+	}
+	let rootVNode = component._vnode;
+	if (!rootVNode) {
+		return null;
+	}
+	while (rootVNode._parent) {
+		rootVNode = rootVNode._parent;
+	}
+	const rootComponent = rootVNode._component;
+	const rootDom = rootComponent && rootComponent._parentDom;
+	if (!rootDom) {
+		return null;
+	}
+	return rootDom.nodeType === DOCUMENT_NODE ? rootDom.documentElement : rootDom;
+}
+
 export function initDebug() {
 	setupComponentStack();
 
@@ -66,6 +92,8 @@ export function initDebug() {
 	let oldCatchError = options._catchError;
 	let oldRoot = options._root;
 	let oldHook = options._hook;
+	let oldEnqueueRender = options._enqueueRender;
+	let oldPassiveEffect = options._passiveEffect;
 	const warnedComponents = !isWeakMapSupported
 		? null
 		: {
@@ -74,6 +102,8 @@ export function initDebug() {
 				lazyPropTypes: new WeakMap()
 			};
 	const deprecations = [];
+	const passiveUpdateStreaks = isWeakMapSupported ? new WeakMap() : null;
+	const passiveBatches = [];
 
 	options._catchError = (error, vnode, oldVNode, errorInfo) => {
 		let component = vnode && vnode._component;
@@ -134,6 +164,25 @@ export function initDebug() {
 			throw new Error(
 				`Expected a valid HTML node as a second argument to render.	Received ${parentNode} instead: render(<${componentName} />, ${parentNode});`
 			);
+		}
+
+		if (passiveUpdateStreaks) {
+			const root =
+				parentNode.nodeType === DOCUMENT_NODE
+					? parentNode.documentElement
+					: parentNode;
+			const batch = passiveBatches[passiveBatches.length - 1];
+			const unmount = vnode == null || typeof vnode == 'boolean';
+			// A render initiated outside this root's effects starts a new chain.
+			if (unmount || !batch || batch.root !== root) {
+				passiveUpdateStreaks.delete(root);
+			}
+			if (unmount) {
+				for (const activeBatch of passiveBatches) {
+					activeBatch.updates.delete(root);
+					if (activeBatch.root === root) activeBatch.root = null;
+				}
+			}
 		}
 
 		if (oldRoot) oldRoot(vnode, parentNode);
@@ -271,6 +320,62 @@ export function initDebug() {
 		}
 
 		if (oldHook) oldHook(comp, index, type);
+	};
+
+	options._passiveEffect = (phase, component) => {
+		if (oldPassiveEffect) oldPassiveEffect(phase, component);
+		if (!passiveUpdateStreaks) return;
+
+		if (phase === 0) {
+			passiveBatches.push({ updates: new Map(), root: null, vnode: null });
+			return;
+		}
+
+		const batch = passiveBatches[passiveBatches.length - 1];
+		if (phase === 1) {
+			const root = (batch.root = getRenderRoot(component));
+			batch.vnode = component._vnode;
+			if (root && !batch.updates.has(root)) batch.updates.set(root, null);
+		} else if (phase === 2) {
+			batch.root = batch.vnode = null;
+		} else {
+			passiveBatches.pop();
+			for (const [root, trigger] of batch.updates) {
+				if (!trigger) {
+					passiveUpdateStreaks.delete(root);
+					continue;
+				}
+
+				const count = (passiveUpdateStreaks.get(root) || 0) + 1;
+				if (count > PASSIVE_UPDATE_LIMIT) {
+					passiveUpdateStreaks.delete(root);
+					console.error(
+						'Maximum update depth exceeded. This can happen when a component ' +
+							"calls setState inside useEffect, but useEffect either doesn't " +
+							'have a dependency array, or one of the dependencies changes on ' +
+							'every render.' +
+							`\n\n${getOwnerStack(trigger)}`
+					);
+				} else {
+					passiveUpdateStreaks.set(root, count);
+				}
+			}
+		}
+	};
+
+	options._enqueueRender = component => {
+		if (oldEnqueueRender) oldEnqueueRender(component);
+		if (!passiveUpdateStreaks) return;
+
+		const root = getRenderRoot(component);
+		if (!root) return;
+		const batch = passiveBatches[passiveBatches.length - 1];
+		if (batch && batch.root === root) {
+			if (!batch.updates.get(root)) batch.updates.set(root, batch.vnode);
+		} else {
+			// A new update outside this root's effects breaks the feedback chain.
+			passiveUpdateStreaks.delete(root);
+		}
 	};
 
 	// Ideally we'd want to print a warning once per component, but we
