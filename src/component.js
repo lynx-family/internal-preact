@@ -1,12 +1,14 @@
 import {
 	COMPONENT_DIRTY,
 	COMPONENT_FORCE,
+	COMPONENT_PARKED,
+	EMPTY_OBJ,
 	MODE_HYDRATE,
 	NULL,
 	UNDEFINED
 } from './constants';
-import { Fragment } from './create-element';
-import { commitRoot, diff } from './diff/index';
+import { Fragment, setRefreshType } from './create-element';
+import { commitRoot, diff, unmount } from './diff/index';
 import options from './options';
 import { assign } from './util';
 
@@ -122,6 +124,16 @@ export function getDomSibling(vnode, childIndex) {
 		: NULL;
 }
 
+/** @param {import('./internal').VNode} vnode */
+export function isParked(vnode) {
+	for (; vnode; vnode = vnode._parent) {
+		if (vnode._component && vnode._component._bits & COMPONENT_PARKED) {
+			return true;
+		}
+	}
+	return false;
+}
+
 /**
  * Trigger in-place re-rendering of a component.
  * @param {import('./internal').Component} component The component to rerender
@@ -136,22 +148,53 @@ function renderComponent(component) {
 	if (parentDom) {
 		const newVNode = assign({ constructor: UNDEFINED }, oldVNode);
 		newVNode._original = oldVNode._original + 1;
+		const type = options._resolveRefreshType
+			? options._resolveRefreshType(oldVNode.type)
+			: oldVNode.type;
+		const remount = type !== oldVNode.type;
+		if (remount && isParked(oldVNode)) {
+			// Suspense will reconcile the replacement when it restores this tree.
+			component._bits &= ~COMPONENT_DIRTY;
+			return;
+		}
+		if (remount) {
+			setRefreshType(newVNode, type);
+			newVNode._component = newVNode._children = newVNode._dom = NULL;
+			newVNode._flags = 0;
+		}
 		if (options.vnode) options.vnode(newVNode);
 		if (options.renderComponent) options.renderComponent(newVNode, component);
+
+		const globalContext = component._globalContext;
+		const previous = remount ? EMPTY_OBJ : oldVNode;
+		const anchor = (remount ? NULL : oldDom) || getDomSibling(oldVNode);
+		if (remount) {
+			// Fast Refresh can resolve the scheduled VNode to a different type.
+			// Keep its position and context while mounting a fresh subtree.
+			unmount(oldVNode, oldVNode);
+		}
 
 		diff(
 			parentDom,
 			newVNode,
-			oldVNode,
-			component._globalContext,
+			previous,
+			globalContext,
 			parentDom.namespaceURI,
 			newVNode._slotIndex,
-			oldVNode._flags & MODE_HYDRATE ? [oldDom] : NULL,
+			previous._flags & MODE_HYDRATE ? [oldDom] : NULL,
 			commitQueue,
-			oldDom || getDomSibling(oldVNode),
-			oldVNode._flags & MODE_HYDRATE,
+			anchor,
+			previous._flags & MODE_HYDRATE,
 			refQueue
 		);
+
+		if (remount && newVNode.ref) {
+			refQueue.push(
+				newVNode.ref,
+				newVNode._component || newVNode._dom,
+				newVNode
+			);
+		}
 
 		newVNode._original = oldVNode._original;
 		newVNode._parent._children[newVNode._index] = newVNode;

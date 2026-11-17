@@ -1,6 +1,7 @@
 import { Component, Fragment, createElement, options } from 'preact';
 import {
 	COMPONENT_FORCE,
+	COMPONENT_PARKED,
 	FORCE_PROPS_REVALIDATE,
 	MODE_HYDRATE,
 	UNDEFINED
@@ -93,6 +94,9 @@ function removeOriginal(vnode, detachedParent, originalParent) {
 				}
 				vnode._component._bits |= COMPONENT_FORCE;
 				vnode._component._parentDom = originalParent;
+			} else if (options._resolveRefreshType) {
+				// A bailout on reveal must not hide refreshed descendants.
+				vnode._component._bits |= COMPONENT_FORCE;
 			}
 		}
 	}
@@ -153,6 +157,7 @@ function createSuspense() {
 				// suspended children into the _children array
 				if (this.state._suspended) {
 					const suspendedVNode = this.state._suspended;
+					suspendedVNode._component._bits &= ~COMPONENT_PARKED;
 					this._vnode._children[0] = removeOriginal(
 						suspendedVNode,
 						suspendedVNode._component._parentDom,
@@ -204,6 +209,7 @@ function createSuspense() {
 			if (this._vnode._children) {
 				const detachedParent = options.document.createElement('div');
 				const detachedComponent = this._vnode._children[0]._component;
+				detachedComponent._bits |= COMPONENT_PARKED;
 				this._vnode._children[0] = detachedClone(
 					this._detachOnNextRender,
 					detachedParent,

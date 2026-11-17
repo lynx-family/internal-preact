@@ -68,6 +68,20 @@ export function cloneElement(vnode, props, children) {
 }
 
 /**
+ * @param {import('./internal').VNode} vnode
+ * @param {import('./internal').VNode['type']} type
+ */
+export function setRefreshType(vnode, type) {
+	vnode.type = type;
+	vnode.props = assign({}, vnode.props);
+	if (vnode.ref && typeof type == 'function' && !type.prototype?.render) {
+		// Compat extracts class refs, but function components receive ref as a prop.
+		vnode.props.ref = vnode.ref;
+		vnode.ref = NULL;
+	}
+}
+
+/**
  * Create a VNode (used internally by Preact)
  * @param {import('./internal').VNode["type"]} type The node name or Component
  * Constructor for this virtual node

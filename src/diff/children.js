@@ -1,5 +1,5 @@
 import { diff, unmount, applyRef } from './index';
-import { createVNode, Fragment } from '../create-element';
+import { createVNode, Fragment, setRefreshType } from '../create-element';
 import {
 	EMPTY_OBJ,
 	EMPTY_ARR,
@@ -10,7 +10,8 @@ import {
 	HAS_MOVE_BEFORE_SUPPORT
 } from '../constants';
 import { isArray } from '../util';
-import { getDomSibling } from '../component';
+import { getDomSibling, isParked } from '../component';
+import options from '../options';
 
 /**
  * @typedef {import('../internal').ComponentChildren} ComponentChildren
@@ -239,6 +240,13 @@ function constructNewChildrenArray(
 		// every child gets a unique slot id (its position); at Fragment / list level
 		// children share the parent's slot id, so keyed reorder still works.
 		childVNode._slotIndex = slotIndex === true ? i : slotIndex;
+		if (options._resolveRefreshType && typeof childVNode.type == 'function') {
+			const type = options._resolveRefreshType(childVNode.type);
+			if (type !== childVNode.type && !isParked(newParentVNode)) {
+				setRefreshType(childVNode, type);
+				if (options.vnode) options.vnode(childVNode);
+			}
+		}
 
 		const skewedIndex = i + skew;
 		childVNode._parent = newParentVNode;

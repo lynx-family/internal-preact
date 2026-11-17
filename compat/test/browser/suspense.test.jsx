@@ -1,4 +1,5 @@
 import { act, setupRerender } from 'preact/test-utils';
+import { options } from 'preact';
 import React, {
 	createElement,
 	render,
@@ -2662,6 +2663,106 @@ describe('suspense', () => {
 		// After resolving, the state should have been buffered and applied
 		expect(scratch.innerHTML).to.equal('<div>Count: 3</div>');
 	});
+
+	it.each([false, true])(
+		'remounts refreshed classes on reveal (host wrapper: %s)',
+		async wrapped => {
+			const originalResolver = options._resolveRefreshType;
+			const lifecycle = [];
+			let oldCounter, suspender, wrapper, resolve;
+			let pending = false;
+			const promise = new Promise(r => {
+				resolve = r;
+			});
+
+			class OldCounter extends Component {
+				componentDidMount() {
+					oldCounter = this;
+					lifecycle.push('mount old');
+				}
+				componentWillUnmount() {
+					lifecycle.push('unmount old');
+				}
+				render(_props, state) {
+					return <div>{state.label || 'old'}</div>;
+				}
+			}
+
+			class NewCounter extends Component {
+				componentDidMount() {
+					lifecycle.push('mount new');
+				}
+				render() {
+					return [<div>new</div>, <div>extra</div>];
+				}
+			}
+
+			class Suspender extends Component {
+				componentDidMount() {
+					suspender = this;
+				}
+				render() {
+					if (pending) throw promise;
+					return <div>adjacent</div>;
+				}
+			}
+
+			class Wrapper extends Component {
+				componentDidMount() {
+					wrapper = this;
+				}
+				shouldComponentUpdate() {
+					return false;
+				}
+				render(props) {
+					return props.children;
+				}
+			}
+
+			const children = [<OldCounter key="old" />, <Suspender key="adjacent" />];
+			try {
+				render(
+					<Suspense fallback={<b>loading</b>}>
+						{wrapped ? (
+							<section>
+								<Wrapper>{children}</Wrapper>
+							</section>
+						) : (
+							children
+						)}
+					</Suspense>,
+					scratch
+				);
+				pending = true;
+				suspender.forceUpdate();
+				rerender();
+				expect(scratch.textContent).to.equal('loading');
+
+				oldCounter.setState({ label: 'updated old' });
+				if (wrapper) wrapper.forceUpdate();
+				rerender();
+				options._resolveRefreshType = type =>
+					type === OldCounter ? NewCounter : type;
+				oldCounter.forceUpdate();
+				rerender();
+				expect(lifecycle).to.deep.equal(['mount old']);
+				expect(scratch.textContent).to.equal('loading');
+
+				pending = false;
+				resolve();
+				await promise;
+				rerender();
+				expect(lifecycle).to.deep.equal([
+					'mount old',
+					'unmount old',
+					'mount new'
+				]);
+				expect(scratch.textContent).to.equal('newextraadjacent');
+			} finally {
+				options._resolveRefreshType = originalResolver;
+			}
+		}
+	);
 
 	it('should not schedule renders for forceUpdate on suspended component', () => {
 		let suspenderForceUpdate;

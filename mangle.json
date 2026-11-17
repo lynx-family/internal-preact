@@ -65,6 +65,7 @@
       "$_prevState": "__u",
       "$_root": "__",
       "$_diff": "__b",
+      "$_resolveRefreshType": "__refreshType",
       "$_commit": "__c",
       "$_addHookName": "__a",
       "$_render": "__r",

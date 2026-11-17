@@ -25,6 +25,8 @@ export interface ErrorInfo {
 }
 
 export interface Options extends preact.Options {
+	/** Resolves a component type before reconciliation for Fast Refresh. */
+	_resolveRefreshType?(type: VNode['type']): VNode['type'];
 	/** Attach a hook that is invoked before render, mainly to check the arguments. */
 	_root?(vnode: ComponentChild, parent: preact.ContainerNode): void;
 	/** Attach a hook that is invoked before a vnode is diffed. */
