@@ -17,8 +17,8 @@ jobs:
     outputs:
       tag_name: ${{ steps.build-version.outputs.full_version }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: 22
       - name: Get package version
@@ -40,18 +40,18 @@ jobs:
           TIMESTAMP=$(date -u +%Y%m%d%H%M%S)
           FULL_VERSION="${{ steps.package-version.outputs.version }}-${TIMESTAMP}-${{ steps.commit-hash.outputs.sha }}"
           echo "full_version=$FULL_VERSION" >> $GITHUB_OUTPUT
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: npm-package
       - name: Create draft release
         id: create-release
-        uses: actions/github-script@v6
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
         with:
           script: |
             const script = require('./scripts/release/create-gh-release.js')
             return script({ github, context, tagName: '${{ steps.build-version.outputs.full_version }}' })
       - name: Upload release artifact
-        uses: actions/github-script@v6
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
         with:
           script: |
             const script = require('./scripts/release/upload-gh-asset.js')
