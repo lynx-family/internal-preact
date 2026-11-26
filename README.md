@@ -1,6 +1,3 @@
-> [!NOTE]
-> This is the branch for the upcoming release, for patches to v10 you need the [v10.x branch](https://github.com/preactjs/preact/tree/v10.x)
-
 <p align="center">
 <a href="https://preactjs.com" target="_blank">
 
@@ -51,7 +48,7 @@ Despite the fork, we remain committed to contributing general-purpose improvemen
 
 [![coveralls](https://img.shields.io/coveralls/preactjs/preact/main.svg)](https://coveralls.io/github/preactjs/preact)
 [![gzip size](https://img.badgesize.io/https://unpkg.com/preact/dist/preact.mjs?compression=gzip&label=gzip)](https://unpkg.com/preact/dist/preact.mjs)
-[![brotli size](https://img.badgesize.io/https://unpkg.com/preact/dist/preact.mjs?compression=brotli&label=brotli)](https://unpkg.com/preact/dist/preact.mjs)
+[![Drydock review](https://img.shields.io/endpoint?url=https%3A%2F%2Fdrydock.org%2Fpublic%2Fbadge%2Fnpm%2Fpreact)](https://drydock.org/diff/preact)
 
 </td>
 </tr>

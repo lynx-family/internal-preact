@@ -1,4 +1,5 @@
 import { act, setupRerender } from 'preact/test-utils';
+import { render as coreRender } from 'preact';
 import React, {
 	createElement,
 	render,
@@ -8,9 +9,12 @@ import React, {
 	Fragment,
 	createContext,
 	useState,
+	useRef,
 	useEffect,
 	useLayoutEffect,
-	memo
+	memo,
+	createPortal,
+	createRef
 } from 'preact/compat';
 import { setupScratch, teardown } from '../../../test/_util/helpers';
 import { createLazy, createSuspender } from './suspense-utils';
@@ -204,9 +208,43 @@ describe('suspense', () => {
 		resolve().then(assert).catch(assert);
 	});
 
-	it('should reset hooks of components', () => {
+	it('should reset hooks when a component subtree suspends during mount', async () => {
+		let resolve;
+		let resolved = false;
+		let initializations = 0;
+		const promise = new Promise(r => {
+			resolve = () => {
+				resolved = true;
+				r();
+				return promise;
+			};
+		});
+
+		function App() {
+			const [value] = useState(() => ++initializations);
+			if (!resolved) throw promise;
+			return <p>{value}</p>;
+		}
+
+		render(
+			<Suspense fallback="loading">
+				<App />
+			</Suspense>,
+			scratch
+		);
+		rerender();
+		expect(scratch.textContent).to.equal('loading');
+
+		await resolve();
+		rerender();
+		expect(scratch.innerHTML).to.equal('<p>2</p>');
+		expect(initializations).to.equal(2);
+	});
+
+	it('should preserve hooks of mounted components', () => {
 		/** @type {(v) => void} */
 		let set;
+		let initialRef;
 		const LazyComp = ({ name }) => <div>Hello from {name}</div>;
 
 		/** @type {() => Promise<void>} */
@@ -224,7 +262,10 @@ describe('suspense', () => {
 
 		const Parent = ({ children }) => {
 			const [state, setState] = useState(false);
+			const ref = useRef({});
 			set = setState;
+			if (!initialRef) initialRef = ref;
+			else expect(ref).to.equal(initialRef);
 
 			return (
 				<div>
@@ -251,15 +292,21 @@ describe('suspense', () => {
 
 		return resolve().then(() => {
 			rerender();
-			expect(scratch.innerHTML).to.eql(`<div><p>hi</p></div>`);
+			expect(scratch.innerHTML).to.eql(
+				`<div><p>hi</p><div>Hello from LazyComp</div></div>`
+			);
 		});
 	});
 
-	it('should call effect cleanups', () => {
+	it('should call effect cleanups and setups when hiding and revealing', async () => {
 		/** @type {(v) => void} */
 		let set;
+		const effectSetupSpy = vi.fn();
 		const effectSpy = vi.fn();
+		const effectWithoutCleanupSpy = vi.fn();
+		const layoutEffectSetupSpy = vi.fn();
 		const layoutEffectSpy = vi.fn();
+		const layoutEffectWithoutCleanupSpy = vi.fn();
 		const LazyComp = ({ name }) => <div>Hello from {name}</div>;
 
 		/** @type {() => Promise<void>} */
@@ -279,16 +326,20 @@ describe('suspense', () => {
 			const [state, setState] = useState(false);
 			set = setState;
 			useEffect(() => {
+				effectSetupSpy();
 				return () => {
 					effectSpy();
 				};
-			}, []);
+			}, [state]);
+			useEffect(effectWithoutCleanupSpy, [state]);
 
 			useLayoutEffect(() => {
+				layoutEffectSetupSpy();
 				return () => {
 					layoutEffectSpy();
 				};
 			}, []);
+			useLayoutEffect(layoutEffectWithoutCleanupSpy, []);
 
 			return state ? (
 				<div>{children}</div>
@@ -307,19 +358,90 @@ describe('suspense', () => {
 			</Suspense>,
 			scratch
 		);
+		expect(layoutEffectSetupSpy).toHaveBeenCalledOnce();
+		expect(layoutEffectWithoutCleanupSpy).toHaveBeenCalledOnce();
 
 		set(true);
 		rerender();
 		expect(scratch.innerHTML).to.eql('<div>Suspended...</div>');
+
+		expect(effectSetupSpy).toHaveBeenCalledOnce();
+		expect(effectWithoutCleanupSpy).toHaveBeenCalledOnce();
 		expect(effectSpy).toHaveBeenCalledOnce();
 		expect(layoutEffectSpy).toHaveBeenCalledOnce();
 
-		return resolve().then(() => {
-			rerender();
-			expect(effectSpy).toHaveBeenCalledOnce();
-			expect(layoutEffectSpy).toHaveBeenCalledOnce();
-			expect(scratch.innerHTML).to.eql(`<div><p>hi</p></div>`);
-		});
+		await resolve();
+		await act(() => rerender());
+		expect(effectSpy).toHaveBeenCalledOnce();
+		expect(layoutEffectSpy).toHaveBeenCalledOnce();
+		expect(effectSetupSpy).toHaveBeenCalledTimes(2);
+		expect(effectWithoutCleanupSpy).toHaveBeenCalledTimes(2);
+		expect(layoutEffectSetupSpy).toHaveBeenCalledTimes(2);
+		expect(layoutEffectWithoutCleanupSpy).toHaveBeenCalledTimes(2);
+		expect(scratch.innerHTML).to.eql(
+			`<div><div>Hello from LazyComp</div></div>`
+		);
+	});
+
+	it('should run a layout effect with changed deps once when revealed', async () => {
+		let promise = Promise.resolve();
+		let set;
+		let first = true;
+		const setup = vi.fn();
+		const cleanup = vi.fn();
+		function App() {
+			const [n, setN] = useState(0);
+			set = setN;
+			useLayoutEffect(() => {
+				setup(n);
+				return () => cleanup(n);
+			}, [n]);
+			if (n && first) {
+				first = false;
+				throw promise;
+			}
+			return <p>{n}</p>;
+		}
+
+		render(
+			<Suspense fallback="loading">
+				<App />
+			</Suspense>,
+			scratch
+		);
+		expect(setup).toHaveBeenCalledTimes(1);
+
+		set(1);
+		rerender();
+		expect(scratch.textContent).to.equal('loading');
+		expect(cleanup).toHaveBeenCalledTimes(1);
+
+		await promise;
+		await act(() => rerender());
+		expect(scratch.textContent).to.equal('1');
+		expect(setup.mock.calls).to.deep.equal([[0], [1]]);
+		expect(cleanup).toHaveBeenCalledTimes(1);
+	});
+
+	it('should handle a promise thrown from a layout effect', () => {
+		let threw = false;
+		function App() {
+			useLayoutEffect(() => {
+				if (!threw) {
+					threw = true;
+					throw Promise.resolve();
+				}
+			});
+			return <p>x</p>;
+		}
+
+		render(
+			<Suspense fallback="loading">
+				<App />
+			</Suspense>,
+			scratch
+		);
+		rerender();
 	});
 
 	it('should support a call to setState before rendering the fallback', () => {
@@ -882,6 +1004,68 @@ describe('suspense', () => {
 		});
 	});
 
+	it('should mount DOM in a parked component without throwing and keep its refs (#5251)', () => {
+		/** @type {(v: boolean) => void} */
+		let setSlot;
+		const ref = vi.fn();
+		const layout = vi.fn();
+
+		function Slot() {
+			const [show, set] = useState(false);
+			setSlot = set;
+			useLayoutEffect(() => {
+				if (show) layout();
+			}, [show]);
+			return show ? <header ref={ref}>bar</header> : null;
+		}
+
+		const [Suspender, suspend] = createSuspender(() => (
+			<div id="page">page</div>
+		));
+
+		render(
+			<Suspense fallback={<div>Suspended...</div>}>
+				<Slot />
+				<Suspender />
+				<footer>foot</footer>
+			</Suspense>,
+			scratch
+		);
+		expect(scratch.innerHTML).to.equal(
+			'<div id="page">page</div><footer>foot</footer>'
+		);
+
+		// 1. Park the subtree
+		const [resolve] = suspend();
+		rerender();
+		expect(scratch.innerHTML).to.equal('<div>Suspended...</div>');
+
+		// 2. Mount new DOM while parked: the insertion reference is a sibling
+		// that was removed from the document, which used to throw NotFoundError
+		setSlot(true);
+		expect(() => rerender()).not.to.throw();
+		expect(ref).toHaveBeenCalledTimes(1);
+		expect(layout).toHaveBeenCalledTimes(1);
+		// The new DOM went into the detached container, not the document
+		expect(scratch.innerHTML).to.equal('<div>Suspended...</div>');
+		expect(document.contains(ref.mock.calls[0][0])).to.equal(false);
+		expect(ref.mock.calls[0][0].parentNode.nodeName).to.equal('DIV');
+
+		// 3. Any further update while parked must not re-run mount work
+		setSlot(true);
+		rerender();
+
+		// 4. Resolve: the new DOM is restored at the right position
+		return resolve(() => <div id="page">page2</div>).then(() => {
+			rerender();
+			expect(scratch.innerHTML).to.equal(
+				'<header>bar</header><div id="page">page2</div><footer>foot</footer>'
+			);
+			expect(ref).toHaveBeenCalledTimes(1);
+			expect(ref.mock.calls[0][0]).to.equal(scratch.firstChild);
+			expect(layout).toHaveBeenCalledTimes(1);
+		});
+	});
 	it('should suspend with custom error boundary', () => {
 		const [Suspender, suspend] = createSuspender(() => (
 			<div>within error boundary</div>
@@ -1128,6 +1312,39 @@ describe('suspense', () => {
 		suspend();
 		rerender();
 		expect(scratch.innerHTML).to.eql(`<div>Catcher did catch: {Promise}</div>`);
+	});
+
+	[null, undefined].forEach(value => {
+		it(`should pass a thrown ${value} to the error boundary`, () => {
+			const caught = [];
+			class Boundary extends Component {
+				componentDidCatch(error) {
+					caught.push(error);
+					this.setState({ failed: true });
+				}
+
+				render(props, state) {
+					return state.failed ? 'caught' : props.children;
+				}
+			}
+
+			function Thrower() {
+				throw value;
+			}
+
+			render(
+				<Boundary>
+					<Suspense fallback={<div>Suspended...</div>}>
+						<Thrower />
+					</Suspense>
+				</Boundary>,
+				scratch
+			);
+			rerender();
+
+			expect(caught).to.deep.equal([value]);
+			expect(scratch.innerHTML).to.equal('caught');
+		});
 	});
 
 	it("should throw when lazy's loader throws", () => {
@@ -1767,6 +1984,244 @@ describe('suspense', () => {
 		rerender();
 
 		expect(scratch.innerHTML).to.equal(`<div>i: 2<div>Resolved</div></div>`);
+	});
+
+	[false, true].forEach(bailout => {
+		it(`should route errors from a parked child of a component that suspended on update${bailout ? ' after its boundary bailed out' : ''}`, async () => {
+			let resolve,
+				setValue,
+				updateLayout,
+				childThrows = false;
+			const promise = new Promise(r => (resolve = r));
+
+			function Child() {
+				const [value, set] = useState(0);
+				setValue = set;
+				if (childThrows) {
+					childThrows = false;
+					throw new Error('child');
+				}
+				return <span>{value}</span>;
+			}
+
+			function Suspender({ suspend }) {
+				if (suspend) throw promise;
+				return <Child />;
+			}
+
+			function Layout({ children }) {
+				const [, set] = useState(0);
+				updateLayout = () => set(v => v + 1);
+				return children;
+			}
+
+			const App = ({ suspend }) => (
+				<Catcher>
+					<Layout>
+						<Suspense fallback={<div>Suspended...</div>}>
+							<Suspender suspend={suspend} />
+						</Suspense>
+					</Layout>
+				</Catcher>
+			);
+
+			render(<App suspend={false} />, scratch);
+			expect(scratch.innerHTML).to.equal('<span>0</span>');
+
+			render(<App suspend={true} />, scratch);
+			rerender();
+			expect(scratch.innerHTML).to.equal('<div>Suspended...</div>');
+
+			if (bailout) {
+				updateLayout();
+				rerender();
+				updateLayout();
+				rerender();
+				expect(scratch.innerHTML).to.equal('<div>Suspended...</div>');
+			}
+
+			childThrows = true;
+			setValue(1);
+			rerender();
+			expect(scratch.innerHTML).to.equal('<div>Catcher did catch: child</div>');
+
+			resolve();
+			await promise;
+			rerender();
+			expect(scratch.innerHTML).to.equal('<div>Catcher did catch: child</div>');
+		});
+	});
+
+	[false, true].forEach(innerBoundary => {
+		it(`should route errors from a parked child after its parent suspended on its own update (${innerBoundary ? 'inner' : 'outer'} boundary)`, () => {
+			let setValue,
+				forceSuspender,
+				childThrows = false,
+				suspend = false;
+			const promise = new Promise(() => {});
+
+			function Child() {
+				const [value, set] = useState(0);
+				setValue = set;
+				if (childThrows) {
+					childThrows = false;
+					throw new Error('child');
+				}
+				return <span>{value}</span>;
+			}
+
+			class Suspender extends Component {
+				render() {
+					forceSuspender = () => this.forceUpdate();
+					if (suspend) throw promise;
+					return <Child />;
+				}
+			}
+
+			const suspender = innerBoundary ? (
+				<Catcher>
+					<Suspender />
+				</Catcher>
+			) : (
+				<Suspender />
+			);
+			const boundary = (
+				<Suspense fallback={<div>Suspended...</div>}>{suspender}</Suspense>
+			);
+			render(innerBoundary ? boundary : <Catcher>{boundary}</Catcher>, scratch);
+			expect(scratch.innerHTML).to.equal('<span>0</span>');
+
+			suspend = true;
+			forceSuspender();
+			rerender();
+			expect(scratch.innerHTML).to.equal('<div>Suspended...</div>');
+
+			const didCatch = vi.spyOn(Catcher.prototype, 'componentDidCatch');
+			childThrows = true;
+			setValue(1);
+			expect(() => rerender()).not.to.throw();
+			expect(didCatch).toHaveBeenCalledOnce();
+			expect(didCatch.mock.calls[0][0].message).to.equal('child');
+			if (!innerBoundary) {
+				expect(scratch.innerHTML).to.equal(
+					'<div>Catcher did catch: child</div>'
+				);
+			}
+			didCatch.mockRestore();
+		});
+	});
+
+	[
+		['changes its root element', v => (v ? <p>b</p> : <span>a</span>)],
+		['goes from null to DOM', v => (v ? <p>b</p> : null)]
+	].forEach(([name, view]) => {
+		it(`should keep DOM of a parked sibling that ${name} in the parked subtree`, async () => {
+			let resolve, setB, forceSuspender;
+			const promise = new Promise(r => (resolve = r));
+			let suspend = false;
+
+			class Suspender extends Component {
+				render() {
+					forceSuspender = () => this.forceUpdate();
+					if (suspend) throw promise;
+					return <i>s</i>;
+				}
+			}
+
+			function B() {
+				const [v, set] = useState(false);
+				setB = set;
+				return view(v);
+			}
+
+			render(
+				<div>
+					<Suspense fallback={<div>Suspended...</div>}>
+						<Suspender />
+						<B />
+					</Suspense>
+					<footer />
+				</div>,
+				scratch
+			);
+
+			suspend = true;
+			forceSuspender();
+			rerender();
+			expect(scratch.innerHTML).to.equal(
+				'<div><div>Suspended...</div><footer></footer></div>'
+			);
+
+			setB(true);
+			rerender();
+			expect(scratch.innerHTML).to.equal(
+				'<div><div>Suspended...</div><footer></footer></div>'
+			);
+
+			suspend = false;
+			resolve();
+			await promise;
+			rerender();
+			expect(scratch.innerHTML).to.equal(
+				'<div><i>s</i><p>b</p><footer></footer></div>'
+			);
+		});
+	});
+
+	it('should reveal a parked subtree after its boundary bailed out', async () => {
+		let resolve, updateLayout;
+		const promise = new Promise(r => (resolve = r));
+		let suspend = false;
+
+		function Suspender() {
+			if (suspend) throw promise;
+			return <span>content</span>;
+		}
+
+		function Layout({ children }) {
+			const [, set] = useState(0);
+			updateLayout = () => set(v => v + 1);
+			return children;
+		}
+
+		let forceSuspender;
+		class Wrapper extends Component {
+			render() {
+				forceSuspender = () => this.forceUpdate();
+				return <Suspender />;
+			}
+		}
+
+		render(
+			<Layout>
+				<Suspense fallback={<div>Suspended...</div>}>
+					<Wrapper />
+				</Suspense>
+			</Layout>,
+			scratch
+		);
+		expect(scratch.innerHTML).to.equal('<span>content</span>');
+
+		suspend = true;
+		forceSuspender();
+		rerender();
+		expect(scratch.innerHTML).to.equal('<div>Suspended...</div>');
+
+		updateLayout();
+		rerender();
+		expect(scratch.innerHTML).to.equal('<div>Suspended...</div>');
+
+		suspend = false;
+		resolve();
+		await promise;
+		rerender();
+		expect(scratch.innerHTML).to.equal('<span>content</span>');
+
+		updateLayout();
+		rerender();
+		forceSuspender();
+		rerender();
+		expect(scratch.innerHTML).to.equal('<span>content</span>');
 	});
 
 	it('should call componentWillUnmount on a suspended component', () => {
@@ -2706,5 +3161,651 @@ describe('suspense', () => {
 		// Render count should not have increased
 		expect(renderCount).to.equal(renderCountAfterSuspend);
 		expect(scratch.innerHTML).to.equal('<div>Loading...</div>');
+	});
+
+	it('should detach DOM refs while parked and attach them again on reveal', async () => {
+		const [Suspender, suspend] = createSuspender(() => <p>content</p>);
+		const ref = createRef();
+		render(
+			<Suspense fallback={<div>fallback</div>}>
+				<b ref={ref}>host</b>
+				<Suspender />
+			</Suspense>,
+			scratch
+		);
+		const host = scratch.firstChild;
+		expect(ref.current).to.equal(host);
+
+		const [resolve] = suspend();
+		rerender();
+		expect(scratch.innerHTML).to.equal('<div>fallback</div>');
+		expect(ref.current).to.equal(null);
+
+		await resolve(() => <p>resolved</p>);
+		rerender();
+		expect(scratch.innerHTML).to.equal('<b>host</b><p>resolved</p>');
+		expect(scratch.firstChild).to.equal(host);
+		expect(ref.current).to.equal(host);
+	});
+
+	it('should call a ref cleanup once when parked and once more on unmount', async () => {
+		const [Suspender, suspend] = createSuspender(() => <p>content</p>);
+		const log = [];
+		const ref = el => {
+			log.push('ref ' + el.textContent);
+			return () => log.push('cleanup ' + el.textContent);
+		};
+		render(
+			<Suspense fallback={<div>fallback</div>}>
+				<b ref={ref}>host</b>
+				<Suspender />
+			</Suspense>,
+			scratch
+		);
+
+		const [resolve] = suspend();
+		rerender();
+		expect(log).to.deep.equal(['ref host', 'cleanup host']);
+
+		await resolve(() => <p>resolved</p>);
+		rerender();
+		expect(log).to.deep.equal(['ref host', 'cleanup host', 'ref host']);
+
+		render(null, scratch);
+		expect(log).to.deep.equal([
+			'ref host',
+			'cleanup host',
+			'ref host',
+			'cleanup host'
+		]);
+	});
+
+	it('should not detach a parked ref again when it changes before the reveal', async () => {
+		const [Suspender, suspend] = createSuspender(() => <p>content</p>);
+		const log = [];
+		let update;
+		function App() {
+			const [n, setN] = useState(0);
+			update = setN;
+			return (
+				<Suspense fallback={<div>fallback</div>}>
+					<b
+						ref={el => {
+							log.push('ref ' + n + ' ' + el.textContent);
+							return () => log.push('cleanup ' + n);
+						}}
+					>
+						host
+					</b>
+					<Suspender />
+				</Suspense>
+			);
+		}
+		render(<App />, scratch);
+
+		const [resolve] = suspend();
+		rerender();
+		update(1);
+		rerender();
+		expect(log).to.deep.equal(['ref 0 host', 'cleanup 0']);
+
+		await resolve(() => <p>resolved</p>);
+		rerender();
+		expect(log).to.deep.equal(['ref 0 host', 'cleanup 0', 'ref 1 host']);
+	});
+
+	it('should not detach a parked ref again when its element is removed', async () => {
+		const [Suspender, suspend] = createSuspender(() => <p>content</p>);
+		const log = [];
+		const ref = el => {
+			log.push('ref ' + el.textContent);
+			return () => log.push('cleanup ' + el.textContent);
+		};
+		function App({ show }) {
+			return (
+				<Suspense fallback={<div>fallback</div>}>
+					{show && <b ref={ref}>host</b>}
+					<Suspender />
+				</Suspense>
+			);
+		}
+		render(<App show />, scratch);
+
+		const [resolve] = suspend();
+		rerender();
+		render(<App show={false} />, scratch);
+		await resolve(() => <p>resolved</p>);
+		rerender();
+		expect(log).to.deep.equal(['ref host', 'cleanup host']);
+	});
+
+	it('should not run a child ref cleanup for a parked class ref', async () => {
+		const [Suspender, suspend] = createSuspender(() => <p>content</p>);
+		const log = [];
+		const classRef = () => {
+			log.push('ref class');
+			return () => log.push('cleanup class');
+		};
+		const hostRef = () => {
+			log.push('ref host');
+			return () => log.push('cleanup host');
+		};
+		class Host extends Component {
+			render() {
+				return <b ref={hostRef}>host</b>;
+			}
+		}
+		render(
+			<Suspense fallback={<div>fallback</div>}>
+				<Host ref={classRef} />
+				<Suspender />
+			</Suspense>,
+			scratch
+		);
+
+		const [resolve] = suspend();
+		rerender();
+		expect(log).to.deep.equal(['ref host', 'ref class', 'cleanup host']);
+
+		await resolve(() => <p>resolved</p>);
+		rerender();
+		render(null, scratch);
+		expect(log).to.deep.equal([
+			'ref host',
+			'ref class',
+			'cleanup host',
+			'ref host',
+			'cleanup class',
+			'cleanup host'
+		]);
+	});
+
+	it('should unmount a parked subtree when the boundary unmounts', () => {
+		const [Suspender, suspend] = createSuspender(() => <p>content</p>);
+		const log = [];
+		let host;
+		class Host extends Component {
+			componentDidMount() {
+				host = this;
+			}
+			componentWillUnmount() {
+				log.push('unmount');
+			}
+			render() {
+				log.push('render');
+				return <b>host</b>;
+			}
+		}
+		const ref = () => {
+			log.push('ref');
+			return () => log.push('cleanup');
+		};
+		render(
+			<Suspense fallback={<div>fallback</div>}>
+				<Host ref={ref} />
+				<Suspender />
+			</Suspense>,
+			scratch
+		);
+
+		suspend();
+		rerender();
+		expect(log).to.deep.equal(['render', 'ref']);
+
+		render(null, scratch);
+		expect(log).to.deep.equal(['render', 'ref', 'cleanup', 'unmount']);
+
+		host.forceUpdate();
+		rerender();
+		expect(log).to.deep.equal(['render', 'ref', 'cleanup', 'unmount']);
+	});
+
+	it('should unmount each instance once when the boundary suspends during a parent update', () => {
+		const [Lazy] = createLazy();
+		const log = [];
+		let id = 0;
+		class Host extends Component {
+			componentDidMount() {
+				this.id = ++id;
+				log.push('mount ' + this.id);
+			}
+			componentWillUnmount() {
+				log.push('unmount ' + this.id);
+			}
+			render() {
+				return <b>host</b>;
+			}
+		}
+		function App() {
+			const [, update] = useState(false);
+			useLayoutEffect(() => update(true), []);
+			return (
+				<Suspense fallback={<div>fallback</div>}>
+					<Host />
+					<Lazy />
+				</Suspense>
+			);
+		}
+
+		render(<App />, scratch);
+		rerender();
+		expect(scratch.innerHTML).to.equal('<div>fallback</div>');
+		expect(log).to.deep.equal(['mount 1', 'unmount 1', 'mount 2']);
+
+		render(null, scratch);
+		expect(log).to.deep.equal(['mount 1', 'unmount 1', 'mount 2', 'unmount 2']);
+	});
+
+	it.skip('should bubble events through listeners revealed after re-suspending', async () => {
+		const outer = vi.fn(),
+			inner = vi.fn();
+		const [Lazy, resolve] = createLazy();
+		let setChild;
+		function App() {
+			const [child, setChildInternal] = useState(<Lazy />);
+			setChild = setChildInternal;
+			return (
+				<Suspense fallback={<div>fallback</div>}>
+					<div onClick={outer}>
+						<button onClick={inner}>x</button>
+					</div>
+					{child}
+				</Suspense>
+			);
+		}
+
+		render(<App />, scratch);
+		rerender();
+		await resolve(() => <div>b1</div>);
+		rerender();
+
+		const [Lazy2, resolve2] = createLazy();
+		setChild(<Lazy2 />);
+		rerender();
+		expect(scratch.textContent).to.contain('fallback');
+		await resolve2(() => <div>b2</div>);
+		rerender();
+
+		const errors = [];
+		const onError = e => {
+			errors.push(String(e.error || e.message));
+			e.preventDefault();
+		};
+		window.addEventListener('error', onError);
+		try {
+			scratch
+				.querySelector('button')
+				.dispatchEvent(new Event('click', { bubbles: true }));
+		} finally {
+			window.removeEventListener('error', onError);
+		}
+		expect(errors).to.deep.equal([]);
+		expect(inner).toHaveBeenCalledOnce();
+		expect(outer).toHaveBeenCalledOnce();
+	});
+
+	describe('portals', () => {
+		/** @type {HTMLDivElement} */
+		let portalRoot;
+
+		beforeEach(() => {
+			portalRoot = document.createElement('div');
+			document.body.appendChild(portalRoot);
+		});
+
+		afterEach(() => {
+			portalRoot.remove();
+		});
+
+		it('should hide and restore a portal sibling of a suspender', async () => {
+			const [Suspender, suspend] = createSuspender(() => <p>content</p>);
+			render(
+				<Suspense fallback={<div>fallback</div>}>
+					<Suspender />
+					{createPortal(<span>portal</span>, portalRoot)}
+				</Suspense>,
+				scratch
+			);
+			expect(scratch.innerHTML).to.equal('<p>content</p>');
+			expect(portalRoot.innerHTML).to.equal('<span>portal</span>');
+			const portalDom = portalRoot.firstChild;
+
+			const [resolve] = suspend();
+			rerender();
+			expect(scratch.innerHTML).to.equal('<div>fallback</div>');
+			expect(portalRoot.innerHTML).to.equal('');
+
+			await resolve(() => <p>resolved</p>);
+			rerender();
+			expect(scratch.innerHTML).to.equal('<p>resolved</p>');
+			expect(portalRoot.innerHTML).to.equal('<span>portal</span>');
+			expect(portalRoot.firstChild).to.equal(portalDom);
+		});
+
+		it('should hide and restore a portal whose child suspends', async () => {
+			const [Suspender, suspend] = createSuspender(() => <p>content</p>);
+			render(
+				<Suspense fallback={<div>fallback</div>}>
+					<b>host</b>
+					{createPortal(
+						<div>
+							<span>portal</span>
+							<Suspender />
+						</div>,
+						portalRoot
+					)}
+				</Suspense>,
+				scratch
+			);
+			expect(scratch.innerHTML).to.equal('<b>host</b>');
+			expect(portalRoot.innerHTML).to.equal(
+				'<div><span>portal</span><p>content</p></div>'
+			);
+
+			const [resolve] = suspend();
+			rerender();
+			expect(scratch.innerHTML).to.equal('<div>fallback</div>');
+			expect(portalRoot.innerHTML).to.equal('');
+
+			await resolve(() => <p>resolved</p>);
+			rerender();
+			expect(scratch.innerHTML).to.equal('<b>host</b>');
+			expect(portalRoot.innerHTML).to.equal(
+				'<div><span>portal</span><p>resolved</p></div>'
+			);
+		});
+
+		it('should restore a portal nested in a host element and keep updating it', async () => {
+			const [Suspender, suspend] = createSuspender(() => <p>content</p>);
+			let update;
+			function Counter() {
+				const [n, setN] = useState(0);
+				update = () => setN(n => n + 1);
+				return <i>{n}</i>;
+			}
+			render(
+				<Suspense fallback={<div>fallback</div>}>
+					<section>
+						<Suspender />
+						{createPortal(<Counter />, portalRoot)}
+					</section>
+				</Suspense>,
+				scratch
+			);
+			expect(portalRoot.innerHTML).to.equal('<i>0</i>');
+
+			const [resolve] = suspend();
+			rerender();
+			expect(scratch.innerHTML).to.equal('<div>fallback</div>');
+			expect(portalRoot.innerHTML).to.equal('');
+
+			await resolve(() => <p>resolved</p>);
+			rerender();
+			expect(scratch.innerHTML).to.equal('<section><p>resolved</p></section>');
+			expect(portalRoot.innerHTML).to.equal('<i>0</i>');
+
+			update();
+			rerender();
+			expect(portalRoot.innerHTML).to.equal('<i>1</i>');
+		});
+	});
+
+	describe('unmounting a suspender while a sibling is pending', () => {
+		let setShow, setOn, setKey;
+		const Box = ({ children }) => {
+			const [show, set] = useState(true);
+			setShow = set;
+			return <div>{show ? children : null}</div>;
+		};
+
+		it('should not re-render a resolved suspender unmounted before the boundary completes', async () => {
+			const [LazyA, resolveA] = createLazy();
+			const [LazyB, resolveB] = createLazy();
+			render(
+				<Suspense fallback={<i>…</i>}>
+					<Box>
+						<LazyA />
+					</Box>
+					<LazyB />
+				</Suspense>,
+				scratch
+			);
+			rerender();
+			expect(scratch.innerHTML).to.equal('<i>…</i>');
+
+			await resolveA(() => <p>a</p>);
+			rerender();
+			setShow(false);
+			rerender();
+			expect(scratch.innerHTML).to.equal('<i>…</i>');
+
+			await resolveB(() => <p>b</p>);
+			rerender();
+			expect(scratch.innerHTML).to.equal('<div></div><p>b</p>');
+		});
+
+		it('should not re-render a pending suspender unmounted before the boundary completes', async () => {
+			const [LazyA, resolveA] = createLazy();
+			const [LazyB, resolveB] = createLazy();
+			render(
+				<Suspense fallback={<i>…</i>}>
+					<Box>
+						<LazyA />
+					</Box>
+					<LazyB />
+				</Suspense>,
+				scratch
+			);
+			rerender();
+			setShow(false);
+			rerender();
+			expect(scratch.innerHTML).to.equal('<i>…</i>');
+
+			await resolveB(() => <p>b</p>);
+			rerender();
+			expect(scratch.innerHTML).to.equal('<div></div><p>b</p>');
+
+			await resolveA(() => <p>a</p>);
+			rerender();
+			expect(scratch.innerHTML).to.equal('<div></div><p>b</p>');
+			setShow(true);
+			rerender();
+			expect(scratch.innerHTML).to.equal('<div><p>a</p></div><p>b</p>');
+		});
+
+		it('should complete the boundary when the last pending suspender unmounts', async () => {
+			const [LazyA, resolveA] = createLazy();
+			const [LazyB, resolveB] = createLazy();
+			render(
+				<Suspense fallback={<i>…</i>}>
+					<Box>
+						<LazyA />
+					</Box>
+					<LazyB />
+				</Suspense>,
+				scratch
+			);
+			rerender();
+			await resolveB(() => <p>b</p>);
+			rerender();
+			expect(scratch.innerHTML).to.equal('<i>…</i>');
+			setShow(false);
+			rerender();
+			expect(scratch.innerHTML).to.equal('<div></div><p>b</p>');
+
+			await resolveA(() => <p>a</p>);
+			rerender();
+			expect(scratch.innerHTML).to.equal('<div></div><p>b</p>');
+		});
+
+		it('should not re-render an unmounted suspender when suspending on update', async () => {
+			const [LazyA, resolveA] = createLazy();
+			const [LazyB, resolveB] = createLazy();
+			const App = () => {
+				const [on, set] = useState(false);
+				setOn = set;
+				return (
+					<Suspense fallback={<i>…</i>}>
+						<Box>{on && <LazyA />}</Box>
+						{on && <LazyB />}
+					</Suspense>
+				);
+			};
+			render(<App />, scratch);
+			expect(scratch.innerHTML).to.equal('<div></div>');
+
+			setOn(true);
+			rerender();
+			expect(scratch.innerHTML).to.equal('<i>…</i>');
+
+			await resolveA(() => <p>a</p>);
+			rerender();
+			setShow(false);
+			rerender();
+			expect(scratch.innerHTML).to.equal('<i>…</i>');
+
+			await resolveB(() => <p>b</p>);
+			rerender();
+			expect(scratch.innerHTML).to.equal('<div></div><p>b</p>');
+		});
+
+		it('should not re-render a mounted component that re-suspended and was unmounted', async () => {
+			let suspendA = false,
+				suspendB = false,
+				resolveA,
+				resolveB,
+				setA,
+				setB;
+			const promiseA = new Promise(r => (resolveA = r));
+			const promiseB = new Promise(r => (resolveB = r));
+			const A = () => {
+				const [n, set] = useState(0);
+				setA = set;
+				if (suspendA) throw promiseA;
+				return <p>a{n}</p>;
+			};
+			const B = () => {
+				const [n, set] = useState(0);
+				setB = set;
+				if (suspendB) throw promiseB;
+				return <p>b{n}</p>;
+			};
+			render(
+				<Suspense fallback={<i>…</i>}>
+					<Box>
+						<A />
+					</Box>
+					<B />
+				</Suspense>,
+				scratch
+			);
+			expect(scratch.innerHTML).to.equal('<div><p>a0</p></div><p>b0</p>');
+
+			suspendA = suspendB = true;
+			setA(1);
+			setB(1);
+			rerender();
+			expect(scratch.innerHTML).to.equal('<i>…</i>');
+
+			suspendA = false;
+			resolveA();
+			await promiseA;
+			rerender();
+			setShow(false);
+			rerender();
+			expect(scratch.innerHTML).to.equal('<i>…</i>');
+
+			suspendB = false;
+			resolveB();
+			await promiseB;
+			rerender();
+			expect(scratch.innerHTML).to.equal('<div></div><p>b1</p>');
+		});
+
+		it('should render a new instance mounted in place of an unmounted suspender', async () => {
+			const [LazyA, resolveA] = createLazy();
+			const [LazyB, resolveB] = createLazy();
+			// Same DOM parent as its sibling: restoring suspenders that live in
+			// different DOM parents is a separate issue.
+			const Keyed = () => {
+				const [key, set] = useState(1);
+				setKey = set;
+				return <LazyA key={key} />;
+			};
+			render(
+				<Suspense fallback={<i>…</i>}>
+					<Keyed />
+					<LazyB />
+				</Suspense>,
+				scratch
+			);
+			rerender();
+			setKey(2);
+			rerender();
+			expect(scratch.innerHTML).to.equal('<i>…</i>');
+
+			await resolveA(() => <p>a</p>);
+			rerender();
+			expect(scratch.innerHTML).to.equal('<i>…</i>');
+
+			await resolveB(() => <p>b</p>);
+			rerender();
+			expect(scratch.innerHTML).to.equal('<p>a</p><p>b</p>');
+		});
+	});
+});
+
+describe('suspense resuming into existing DOM', () => {
+	/** @type {HTMLDivElement} */
+	let scratch, rerender;
+
+	beforeEach(() => {
+		scratch = setupScratch();
+		rerender = setupRerender();
+	});
+
+	afterEach(() => {
+		teardown(scratch);
+	});
+
+	it('should reuse DOM kept while suspended when rendering into a non-empty container', async () => {
+		scratch.innerHTML = '<button class="placeholder">placeholder</button>';
+		const placeholder = scratch.firstChild;
+
+		const [Lazy, resolve] = createLazy();
+		coreRender(
+			<Suspense>
+				<Lazy />
+			</Suspense>,
+			scratch
+		);
+		// Kept until the boundary parks it for the fallback
+		expect(scratch.innerHTML).to.equal(
+			'<button class="placeholder">placeholder</button>'
+		);
+		rerender();
+
+		await resolve(() => <button class="real">real</button>);
+		rerender();
+		expect(scratch.innerHTML).to.equal('<button class="real">real</button>');
+		expect(scratch.firstChild).to.equal(placeholder);
+	});
+
+	it('should remove DOM kept while suspended that the resumed render does not use', async () => {
+		scratch.innerHTML = '<span>placeholder</span>';
+
+		const [Lazy, resolve] = createLazy();
+		coreRender(
+			<Suspense>
+				<Lazy />
+			</Suspense>,
+			scratch
+		);
+		expect(scratch.innerHTML).to.equal('<span>placeholder</span>');
+		rerender();
+
+		await resolve(() => <div>real</div>);
+		rerender();
+		expect(scratch.innerHTML).to.equal('<div>real</div>');
 	});
 });

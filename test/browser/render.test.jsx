@@ -40,6 +40,32 @@ describe('render()', () => {
 		teardown(scratch);
 	});
 
+	it('detaches a replaced vnode still held in props.children', () => {
+		let wrapper;
+		class Wrapper extends Component {
+			render() {
+				wrapper = this;
+				return <div class={this.state.className}>{this.props.children}</div>;
+			}
+		}
+		const child = createElement('span', null, 'child');
+		render(<Wrapper>{child}</Wrapper>, scratch);
+		const parent = child._parent;
+		const dom = scratch.firstChild.firstChild;
+		expect(parent).to.equal(wrapper._vnode._children[0]);
+
+		wrapper.setState({ className: 'updated' });
+		rerender();
+
+		expect(wrapper.props.children).to.equal(child);
+		expect(child._parent).to.equal(null);
+		const current = wrapper._vnode._children[0];
+		expect(current).not.to.equal(parent);
+		expect(current._children[0]._parent).to.equal(current);
+		expect(scratch.firstChild.firstChild).to.equal(dom);
+		expect(scratch.firstChild.className).to.equal('updated');
+	});
+
 	beforeAll(() => {
 		resetAppendChild = logCall(Element.prototype, 'appendChild');
 		resetInsertBefore = logCall(Element.prototype, 'insertBefore');
@@ -149,6 +175,72 @@ describe('render()', () => {
 		expect(scratch.innerHTML).to.equal(
 			'<div><template><h1>3</h1></template><p>after</p></div>'
 		);
+	});
+
+	for (const [tag, childTag, namespace] of [
+		['svg', 'g', 'http://www.w3.org/2000/svg'],
+		['math', 'mrow', 'http://www.w3.org/1998/Math/MathML']
+	]) {
+		it(`should render and update <template> in ${tag}`, () => {
+			const App = ({ items }) =>
+				createElement(
+					tag,
+					null,
+					createElement(
+						'template',
+						null,
+						items.map(i => createElement(childTag, { key: i }, i))
+					)
+				);
+
+			render(<App items={[1, 2]} />, scratch);
+			const template = scratch.firstChild.firstChild;
+			const child = template.firstChild;
+			expect(template.namespaceURI).to.equal(namespace);
+			expect(template.content).to.equal(undefined);
+			expect(template.textContent).to.equal('12');
+			expect(child.namespaceURI).to.equal(namespace);
+
+			render(<App items={[2, 1, 3]} />, scratch);
+			expect(template.textContent).to.equal('213');
+			expect(template.childNodes[1]).to.equal(child);
+
+			render(<App items={[1]} />, scratch);
+			expect(template.firstChild).to.equal(child);
+			expect(template.childNodes).to.have.length(1);
+
+			render(null, scratch);
+			expect(scratch.childNodes).to.have.length(0);
+		});
+	}
+
+	it('should use HTML <template> content inside namespace integration points', () => {
+		render(
+			<div>
+				<svg>
+					<foreignObject>
+						<template>
+							<span>svg</span>
+						</template>
+					</foreignObject>
+				</svg>
+				<math>
+					<mtext>
+						<template>
+							<span>math</span>
+						</template>
+					</mtext>
+				</math>
+			</div>,
+			scratch
+		);
+		for (const template of scratch.querySelectorAll('template')) {
+			expect(template.namespaceURI).to.equal('http://www.w3.org/1999/xhtml');
+			expect(template.childNodes).to.have.length(0);
+			expect(template.content.firstChild.namespaceURI).to.equal(
+				'http://www.w3.org/1999/xhtml'
+			);
+		}
 	});
 
 	it('should render function components with an undefined prototype', () => {
@@ -300,6 +392,280 @@ describe('render()', () => {
 
 		expect(scratch._children._children[0]).to.not.equal(firstAppVNode);
 		expect(scratch._children.props.children).to.equal(null);
+	});
+
+	describe('stale parent pointers', () => {
+		function expectConsistentParents(vnode) {
+			if (!vnode._children) return;
+			vnode._children.forEach(child => {
+				if (child) {
+					expect(child._parent).to.equal(vnode);
+					expectConsistentParents(child);
+				}
+			});
+		}
+
+		it('should release the parent of a matched child after it is replaced (#5403)', () => {
+			const oldChild = <span>before</span>;
+			const oldParent = <div>{oldChild}</div>;
+			render(oldParent, scratch);
+			const span = scratch.firstChild.firstChild;
+
+			const newChild = <span>after</span>;
+			const newParent = <div>{newChild}</div>;
+			render(newParent, scratch);
+
+			expect(oldChild._parent).to.equal(null);
+			expect(oldParent._parent).to.equal(null);
+			expect(newChild._parent).to.equal(newParent);
+			expect(newParent._parent).to.equal(scratch._children);
+			expect(scratch.firstChild.firstChild).to.equal(span);
+			expect(scratch.innerHTML).to.equal('<div><span>after</span></div>');
+			expectConsistentParents(scratch._children);
+		});
+
+		it('should not let reused vnodes retain previous render trees', () => {
+			let addRow;
+			class Log extends Component {
+				constructor(props) {
+					super(props);
+					this.state = { rows: [<p key={0}>0</p>] };
+					addRow = () =>
+						this.setState(s => ({
+							rows: s.rows.concat(<p key={s.rows.length}>{s.rows.length}</p>)
+						}));
+				}
+
+				render() {
+					return <div>{this.state.rows}</div>;
+				}
+			}
+
+			render(<Log />, scratch);
+			const firstRow = scratch._children._children[0]._children[0]._children[0];
+			const firstTree = scratch._children._children[0]._children[0];
+			expect(firstRow._parent).to.equal(firstTree);
+
+			addRow();
+			rerender();
+			addRow();
+			rerender();
+
+			expect(firstRow._parent).to.equal(null);
+			expect(firstTree._parent).to.equal(null);
+			expect(scratch.innerHTML).to.equal('<div><p>0</p><p>1</p><p>2</p></div>');
+			expectConsistentParents(scratch._children);
+		});
+
+		it('should keep parent pointers consistent when keyed children move', () => {
+			const list = keys => (
+				<ul>
+					{keys.map(k => (
+						<li key={k}>{k}</li>
+					))}
+				</ul>
+			);
+
+			render(list(['a', 'b', 'c', 'd']), scratch);
+			const oldChildren = scratch._children._children[0]._children.slice();
+
+			render(list(['d', 'b', 'a', 'e']), scratch);
+			expect(scratch.innerHTML).to.equal(
+				'<ul><li>d</li><li>b</li><li>a</li><li>e</li></ul>'
+			);
+			oldChildren.forEach(child => expect(child._parent).to.equal(null));
+			expectConsistentParents(scratch._children);
+
+			render(list(['e', 'a', 'b', 'd']), scratch);
+			expect(scratch.innerHTML).to.equal(
+				'<ul><li>e</li><li>a</li><li>b</li><li>d</li></ul>'
+			);
+			expectConsistentParents(scratch._children);
+		});
+
+		it('should point adopted children at the new vnode after a child throws on update', () => {
+			let shouldThrow = false,
+				updateGrandChild,
+				grandChildThrows = false;
+			const caught = [];
+
+			class Boundary extends Component {
+				componentDidCatch(error) {
+					caught.push(error.message);
+					this.setState({});
+				}
+				render() {
+					return this.props.children;
+				}
+			}
+
+			class GrandChild extends Component {
+				constructor(props) {
+					super(props);
+					updateGrandChild = () => this.forceUpdate();
+				}
+				render() {
+					if (grandChildThrows) {
+						grandChildThrows = false;
+						throw new Error('grandchild');
+					}
+					return <span>grandchild</span>;
+				}
+			}
+
+			function Thrower() {
+				if (shouldThrow) {
+					shouldThrow = false;
+					throw new Error('thrower');
+				}
+				return <GrandChild />;
+			}
+
+			function App() {
+				return (
+					<Boundary>
+						<div>
+							<Thrower />
+						</div>
+					</Boundary>
+				);
+			}
+
+			render(<App />, scratch);
+			shouldThrow = true;
+			render(<App />, scratch);
+
+			expect(caught).to.deep.equal(['thrower']);
+			expectConsistentParents(scratch._children);
+
+			rerender();
+			expect(scratch.innerHTML).to.equal('<div><span>grandchild</span></div>');
+			expectConsistentParents(scratch._children);
+
+			grandChildThrows = true;
+			updateGrandChild();
+			rerender();
+			expect(caught).to.deep.equal(['thrower', 'grandchild']);
+			expect(scratch.innerHTML).to.equal('<div><span>grandchild</span></div>');
+			expectConsistentParents(scratch._children);
+		});
+
+		it('should update in place after getDerivedStateFromProps threw and its parent bailed out', () => {
+			let shouldThrow = false,
+				setOuter,
+				child;
+
+			class Keep extends Component {
+				componentDidCatch() {
+					this.setState({});
+				}
+				render() {
+					return this.props.children;
+				}
+			}
+
+			class Child extends Component {
+				static getDerivedStateFromProps() {
+					if (shouldThrow) {
+						shouldThrow = false;
+						throw new Error('gdsfp');
+					}
+					return null;
+				}
+				render() {
+					child = this;
+					return (
+						<span>
+							{this.props.value}-{this.state.count || 0}
+						</span>
+					);
+				}
+			}
+
+			class Outer extends Component {
+				constructor(props) {
+					super(props);
+					this.state = { value: 0 };
+					setOuter = value => this.setState({ value });
+				}
+				render() {
+					return <Child value={this.state.value} />;
+				}
+			}
+
+			render(
+				<Keep>
+					<Outer />
+				</Keep>,
+				scratch
+			);
+			expect(scratch.innerHTML).to.equal('<span>0-0</span>');
+
+			shouldThrow = true;
+			setOuter(1);
+			rerender();
+			expect(scratch.innerHTML).to.equal('<span>0-0</span>');
+			expectConsistentParents(scratch._children);
+
+			child.setState({ count: 5 });
+			rerender();
+			expect(scratch.innerHTML).to.equal('<span>1-5</span>');
+			expectConsistentParents(scratch._children);
+
+			setOuter(2);
+			rerender();
+			expect(scratch.innerHTML).to.equal('<span>2-5</span>');
+			expectConsistentParents(scratch._children);
+		});
+
+		it('should keep parent pointers consistent after getDerivedStateFromProps throws', () => {
+			let shouldThrow = false;
+			const caught = [];
+
+			class Boundary extends Component {
+				componentDidCatch(error) {
+					caught.push(error.message);
+					this.setState({});
+				}
+				render() {
+					return this.props.children;
+				}
+			}
+
+			class Child extends Component {
+				static getDerivedStateFromProps() {
+					if (shouldThrow) {
+						shouldThrow = false;
+						throw new Error('gdsfp');
+					}
+					return null;
+				}
+				render() {
+					return <span>{this.props.value}</span>;
+				}
+			}
+
+			render(
+				<Boundary>
+					<Child value="a" />
+				</Boundary>,
+				scratch
+			);
+			shouldThrow = true;
+			render(
+				<Boundary>
+					<Child value="b" />
+				</Boundary>,
+				scratch
+			);
+
+			expect(caught).to.deep.equal(['gdsfp']);
+			expectConsistentParents(scratch._children);
+
+			rerender();
+			expect(scratch.innerHTML).to.equal('<span>b</span>');
+			expectConsistentParents(scratch._children);
+		});
 	});
 
 	it('should nest empty nodes', () => {
@@ -2258,7 +2624,7 @@ describe('render()', () => {
 		};
 
 		Object.defineProperties(Test.prototype, {
-			constructor: { configurable: true, value: undefined },
+			constructor: { configurable: true, value: Symbol.for('pv') },
 			type: { configurable: true, value: TestValue },
 			props: {
 				configurable: true,
@@ -2275,6 +2641,84 @@ describe('render()', () => {
 
 		render(<App />, scratch);
 		expect(scratch.innerHTML).to.equal('hello world');
+	});
+
+	describe('after a render error', () => {
+		const Thrower = ({ shouldThrow }) => {
+			if (shouldThrow) throw new Error('boom');
+			return <b>x</b>;
+		};
+
+		it('should not duplicate the children of a Fragment', () => {
+			const App = ({ title, shouldThrow }) => (
+				<Fragment>
+					<h1>{title}</h1>
+					<Thrower shouldThrow={shouldThrow} />
+					<i>z</i>
+				</Fragment>
+			);
+
+			render(<App title="A" shouldThrow={false} />, scratch);
+			expect(scratch.innerHTML).to.equal('<h1>A</h1><b>x</b><i>z</i>');
+
+			expect(() =>
+				render(<App title="B" shouldThrow={true} />, scratch)
+			).to.throw('boom');
+
+			render(<App title="C" shouldThrow={false} />, scratch);
+			expect(scratch.innerHTML).to.equal('<h1>C</h1><b>x</b><i>z</i>');
+		});
+
+		it('should not duplicate a component rendered at the root', () => {
+			render(<Thrower shouldThrow={false} />, scratch);
+			expect(() => render(<Thrower shouldThrow={true} />, scratch)).to.throw(
+				'boom'
+			);
+
+			render(<Thrower shouldThrow={false} />, scratch);
+			expect(scratch.innerHTML).to.equal('<b>x</b>');
+		});
+
+		it('should detach refs and unmount after repeated render errors', () => {
+			let mounts = 0;
+			let unmounts = 0;
+			const ref = vi.fn();
+			class Tracked extends Component {
+				componentDidMount() {
+					mounts++;
+				}
+				componentWillUnmount() {
+					unmounts++;
+				}
+				render({ shouldThrow }) {
+					if (shouldThrow) throw new Error('boom');
+					return <b ref={ref}>x</b>;
+				}
+			}
+
+			for (let i = 0; i < 5; i++) {
+				render(<Tracked shouldThrow={false} />, scratch);
+				const dom = scratch.firstChild;
+				for (let j = 0; j < 3; j++) {
+					expect(() => render(<Tracked shouldThrow />, scratch)).to.throw(
+						'boom'
+					);
+					render(<Tracked shouldThrow={false} />, scratch);
+					expect(scratch.innerHTML).to.equal('<b>x</b>');
+					expect(scratch.firstChild).to.equal(dom);
+				}
+				render(null, scratch);
+				expect(scratch.innerHTML).to.equal('');
+				expect(mounts).to.equal(i + 1);
+				expect(unmounts).to.equal(i + 1);
+				expect(
+					ref.mock.calls.filter(([value]) => value !== null)
+				).to.have.length(i + 1);
+				expect(
+					ref.mock.calls.filter(([value]) => value === null)
+				).to.have.length(i + 1);
+			}
+		});
 	});
 
 	// Lynx fork: nodes are created from `options.document`, not the container's
@@ -2299,6 +2743,134 @@ describe('render()', () => {
 			);
 			expect(rootCreateElementSpy).not.toBeCalled();
 			expect(iframeCreateElementSpy).toBeCalled();
+		});
+
+		it.skipIf(
+			typeof CustomElementRegistry == 'undefined' ||
+				!('initialize' in CustomElementRegistry.prototype)
+		)('uses the scoped custom element registry of the container', () => {
+			const registry = new CustomElementRegistry();
+			class ScopedEl extends HTMLElement {}
+			registry.define('x-scoped', ScopedEl);
+
+			const host = document.createElement('div');
+			scratch.appendChild(host);
+			const root = host.attachShadow({
+				mode: 'open',
+				customElementRegistry: registry
+			});
+
+			render(
+				<div>
+					<x-scoped />
+				</div>,
+				root
+			);
+
+			const div = root.firstChild;
+			expect(div.customElementRegistry).to.equal(registry);
+			expect(div.firstChild).to.be.instanceOf(ScopedEl);
+			expect(div.firstChild.customElementRegistry).to.equal(registry);
+		});
+
+		it('falls back to the global document for containers without an ownerDocument', () => {
+			// A fake container like `createRootFragment()` from preact-root-fragment
+			const container = {
+				nodeType: 1,
+				parentNode: scratch,
+				firstChild: null,
+				childNodes: [],
+				insertBefore: (c, r) => scratch.insertBefore(c, r),
+				appendChild: c => scratch.appendChild(c),
+				removeChild: c => scratch.removeChild(c)
+			};
+
+			render(<div>Hello world</div>, container);
+			expect(scratch.innerHTML).to.equal('<div>Hello world</div>');
+
+			render('Hello text', container);
+			expect(scratch.innerHTML).to.equal('Hello text');
+		});
+	});
+
+	describe('fake containers (preact-root-fragment)', () => {
+		/**
+		 * A container that owns a slice of a real parent's children, like
+		 * `createRootFragment(parent, children)`. Its children's `parentNode` is
+		 * the real parent, not the container.
+		 */
+		function createRootFragment(parent, children) {
+			const end = children[children.length - 1].nextSibling;
+			const insert = (c, r) => parent.insertBefore(c, r || end);
+			return {
+				nodeType: 1,
+				parentNode: parent,
+				firstChild: children[0],
+				childNodes: children,
+				ownerDocument: parent.ownerDocument,
+				namespaceURI: parent.namespaceURI,
+				insertBefore: insert,
+				appendChild: insert,
+				moveBefore: (c, r) =>
+					parent.moveBefore ? parent.moveBefore(c, r || end) : insert(c, r),
+				removeChild: c => parent.removeChild(c)
+			};
+		}
+
+		const List = ({ items }) => items.map(i => <li key={i}>{i}</li>);
+		const html = items =>
+			'<li id="before"></li>' +
+			items.map(i => `<li>${i}</li>`).join('') +
+			'<li id="after"></li>';
+
+		it('should render into existing children without re-inserting them', () => {
+			scratch.innerHTML = html([1, 2]);
+			const [, a, b] = scratch.children;
+			const root = createRootFragment(scratch, [a, b]);
+
+			clearLog();
+			render(<List items={[1, 2]} />, root);
+			expect(getLog()).to.deep.equal([]);
+			expect(scratch.children[1]).to.equal(a);
+			expect(scratch.children[2]).to.equal(b);
+		});
+
+		it('should insert and reorder children at the right position', () => {
+			scratch.innerHTML = html([1, 2]);
+			const root = createRootFragment(scratch, [
+				scratch.children[1],
+				scratch.children[2]
+			]);
+
+			render(<List items={[1, 2]} />, root);
+			render(<List items={[0, 1, 2]} />, root);
+			expect(scratch.innerHTML).to.equal(html([0, 1, 2]));
+
+			render(<List items={[0, 3, 1, 2]} />, root);
+			expect(scratch.innerHTML).to.equal(html([0, 3, 1, 2]));
+
+			render(<List items={[2, 0, 3, 1]} />, root);
+			expect(scratch.innerHTML).to.equal(html([2, 0, 3, 1]));
+
+			render(<List items={[1, 3, 0, 2]} />, root);
+			expect(scratch.innerHTML).to.equal(html([1, 3, 0, 2]));
+		});
+
+		it('should reorder children in containers without moveBefore()', () => {
+			scratch.innerHTML = html([1, 2, 3]);
+			const root = createRootFragment(scratch, [
+				scratch.children[1],
+				scratch.children[2],
+				scratch.children[3]
+			]);
+			delete root.moveBefore;
+
+			render(<List items={[1, 2, 3]} />, root);
+			render(<List items={[3, 1, 2]} />, root);
+			expect(scratch.innerHTML).to.equal(html([3, 1, 2]));
+
+			render(<List items={[2, 3, 1]} />, root);
+			expect(scratch.innerHTML).to.equal(html([2, 3, 1]));
 		});
 	});
 });

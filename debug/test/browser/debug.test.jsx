@@ -4,7 +4,8 @@ import {
 	createRef,
 	Component,
 	Fragment,
-	hydrate
+	hydrate,
+	createPortal
 } from 'preact';
 import { useState } from 'preact/hooks';
 import { setupScratch, teardown } from '../../../test/_util/helpers';
@@ -39,12 +40,44 @@ describe('debug', () => {
 	});
 
 	it('should initialize devtools', () => {
-		expect(window.__PREACT_DEVTOOLS__.attachPreact).toHaveBeenCalled();
+		expect(window.__PREACT_DEVTOOLS__.attached).to.be.true;
 	});
 
 	it('should print an error on rendering on undefined parent', () => {
 		let fn = () => render(<div />, undefined);
 		expect(fn).to.throw(/render/);
+	});
+
+	[null, undefined].forEach(value => {
+		it(`should pass a thrown ${value} to the error boundary and log it`, () => {
+			const caught = [];
+			class Boundary extends Component {
+				componentDidCatch(error) {
+					caught.push(error);
+					this.setState({ failed: true });
+				}
+
+				render() {
+					return this.state.failed ? 'caught' : this.props.children;
+				}
+			}
+
+			function Thrower() {
+				throw value;
+			}
+
+			render(
+				<Boundary>
+					<Thrower />
+				</Boundary>,
+				scratch
+			);
+			rerender();
+
+			expect(caught).to.deep.equal([value]);
+			expect(errors).to.deep.equal([value]);
+			expect(scratch.innerHTML).to.equal('caught');
+		});
 	});
 
 	it('should print an error on rendering on invalid parent', () => {
@@ -661,6 +694,19 @@ describe('debug', () => {
 			expect(console.error).toHaveBeenCalledOnce();
 		});
 
+		it('should warn for deeply nesting illegal dom-nodes under a paragraph', () => {
+			const Paragraph = () => (
+				<p>
+					<b>
+						<h1>Hello world</h1>
+					</b>
+				</p>
+			);
+
+			render(<Paragraph />, scratch);
+			expect(console.error).toHaveBeenCalledOnce();
+		});
+
 		it('should warn for nesting illegal dom-nodes under a paragraph with a parent', () => {
 			const Paragraph = () => (
 				<div>
@@ -717,6 +763,19 @@ describe('debug', () => {
 			expect(console.error).toHaveBeenCalledOnce();
 		});
 
+		it('should warn for deeply nesting illegal dom-nodes under a button', () => {
+			const Button = () => (
+				<button>
+					<div>
+						<button>Hello world</button>
+					</div>
+				</button>
+			);
+
+			render(<Button />, scratch);
+			expect(console.error).toHaveBeenCalledOnce();
+		});
+
 		it('should warn for nesting illegal dom-nodes under a button as func', () => {
 			const ButtonChild = ({ children }) => <button>{children}</button>;
 			const Button = () => (
@@ -761,6 +820,19 @@ describe('debug', () => {
 			expect(console.error).toHaveBeenCalledOnce();
 		});
 
+		it('should warn for deeply nesting illegal dom-nodes under an anchor', () => {
+			const Anchor = () => (
+				<a>
+					<div>
+						<a>Hello world</a>
+					</div>
+				</a>
+			);
+
+			render(<Anchor />, scratch);
+			expect(console.error).toHaveBeenCalledOnce();
+		});
+
 		it('should warn for nesting illegal dom-nodes under an anchor as func', () => {
 			const AnchorChild = ({ children }) => <a>{children}</a>;
 			const Anchor = () => (
@@ -782,6 +854,174 @@ describe('debug', () => {
 			);
 
 			render(<Anchor />, scratch);
+			expect(console.error).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('nesting across portals', () => {
+		const createTbody = () =>
+			document
+				.createElement('table')
+				.appendChild(document.createElement('tbody'));
+
+		it('should validate table markup against the portal container', () => {
+			const tbody = createTbody();
+			const table = document.createElement('table');
+			const tr = createTbody().appendChild(document.createElement('tr'));
+			render(
+				<div>
+					{createPortal(
+						<tr>
+							<td>row</td>
+						</tr>,
+						tbody
+					)}
+					{createPortal(
+						<tbody>
+							<tr>
+								<td>body</td>
+							</tr>
+						</tbody>,
+						table
+					)}
+					{createPortal(<td>cell</td>, tr)}
+				</div>,
+				scratch
+			);
+			expect(tbody.innerHTML).to.equal('<tr><td>row</td></tr>');
+			expect(console.error).not.toHaveBeenCalled();
+		});
+
+		it('should warn for improper table markup inside a portal', () => {
+			const div = document.createElement('div');
+			render(
+				<table>
+					<tbody>
+						{createPortal(
+							<tr>
+								<td>row</td>
+							</tr>,
+							div
+						)}
+					</tbody>
+				</table>,
+				scratch
+			);
+			expect(console.error).toHaveBeenCalledOnce();
+			expect(errors[0]).to.match(/Your <tr> should have/);
+		});
+
+		it('should validate against the innermost portal container', () => {
+			const tbody = createTbody();
+			const div = document.createElement('div');
+			const Row = () => (
+				<Fragment>
+					<tr>
+						<td>row</td>
+					</tr>
+				</Fragment>
+			);
+			render(
+				<div>{createPortal(<p>{createPortal(<Row />, tbody)}</p>, div)}</div>,
+				scratch
+			);
+			expect(tbody.innerHTML).to.equal('<tr><td>row</td></tr>');
+			expect(console.error).not.toHaveBeenCalled();
+		});
+
+		it('should warn for improper table markup inside a nested portal', () => {
+			const tbody = createTbody();
+			const div = document.createElement('div');
+			const Row = () => (
+				<tr>
+					<td>row</td>
+				</tr>
+			);
+			render(
+				<table>
+					<tbody>{createPortal(createPortal(<Row />, div), tbody)}</tbody>
+				</table>,
+				scratch
+			);
+			expect(console.error).toHaveBeenCalledOnce();
+			expect(errors[0]).to.match(/Your <tr> should have/);
+		});
+
+		it('should not treat portalled content as children of a paragraph', () => {
+			const modal = document.createElement('section');
+			const Modal = () => <div>modal</div>;
+			render(
+				<p>
+					text
+					{createPortal(<div>modal</div>, modal)}
+					<Modal />
+				</p>,
+				scratch
+			);
+			// Only the <Modal /> rendered in place is a DOM child of the <p>
+			expect(console.error).toHaveBeenCalledOnce();
+			expect(errors[0]).to.match(/should not have div as/);
+		});
+
+		it('should not treat portalled content as children of interactive content', () => {
+			const modal = document.createElement('section');
+			const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+			const Tooltip = () => createPortal(<a href="#tip">tip</a>, modal);
+			render(
+				<div>
+					<a href="#x">
+						link
+						<Tooltip />
+						{createPortal(<a href="#svg">svg link</a>, svg)}
+					</a>
+					<button>
+						button
+						{createPortal(<button>other</button>, modal)}
+					</button>
+				</div>,
+				scratch
+			);
+			expect(svg.firstChild.namespaceURI).to.equal(
+				'http://www.w3.org/2000/svg'
+			);
+			expect(console.error).not.toHaveBeenCalled();
+		});
+
+		it('should skip table validation for containers without a localName', () => {
+			const shadow = document
+				.createElement('div')
+				.attachShadow({ mode: 'open' });
+			render(
+				<div>
+					{createPortal(
+						<tr>
+							<td>row</td>
+						</tr>,
+						shadow
+					)}
+				</div>,
+				scratch
+			);
+			expect(shadow.innerHTML).to.equal('<tr><td>row</td></tr>');
+			expect(console.error).not.toHaveBeenCalled();
+		});
+
+		it('should validate portalled content on rerender', () => {
+			const tbody = createTbody();
+			let update;
+			const Row = () => {
+				const [count, setCount] = useState(0);
+				update = () => setCount(count + 1);
+				return (
+					<tr>
+						<td>{count}</td>
+					</tr>
+				);
+			};
+			render(<div>{createPortal(<Row />, tbody)}</div>, scratch);
+			update();
+			rerender();
+			expect(tbody.innerHTML).to.equal('<tr><td>1</td></tr>');
 			expect(console.error).not.toHaveBeenCalled();
 		});
 	});

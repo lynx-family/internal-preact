@@ -5,9 +5,11 @@ import {
 	EMPTY_ARR,
 	INSERT_VNODE,
 	MATCHED,
+	LIS_CANDIDATE,
+	REF_DETACHED,
 	UNDEFINED,
-	NULL,
-	HAS_MOVE_BEFORE_SUPPORT
+	VNODE_MARKER,
+	NULL
 } from '../constants';
 import { isArray } from '../util';
 import { getDomSibling } from '../component';
@@ -23,7 +25,7 @@ import { getDomSibling } from '../component';
  * Diff the children of a virtual node
  * @param {PreactElement} parentDom The DOM element whose children are being
  * diffed
- * @param {ComponentChildren[]} renderResult
+ * @param {ComponentChildren} renderResult
  * @param {VNode} newParentVNode The new virtual node whose children should be
  * diff'ed against oldParentVNode
  * @param {VNode} oldParentVNode The old virtual node whose children should be
@@ -73,6 +75,8 @@ export function diffChildren(
 	/** @type {VNode[]} */
 	let oldChildren = oldParentVNode._children || EMPTY_ARR;
 
+	if (!isArray(renderResult)) renderResult = [renderResult];
+
 	let newChildrenLength = renderResult.length;
 
 	oldDom = constructNewChildrenArray(
@@ -117,16 +121,20 @@ export function diffChildren(
 
 		// Adjust DOM nodes
 		newDom = childVNode._dom;
-		if (childVNode.ref && oldVNode.ref != childVNode.ref) {
-			if (oldVNode.ref) {
-				applyRef(oldVNode.ref, NULL, childVNode);
+		// A ref detached while its subtree was parked by Suspense is attached
+		// again on reveal.
+		if (oldVNode.ref != childVNode.ref || oldVNode._flags & REF_DETACHED) {
+			if (oldVNode.ref) applyRef(oldVNode.ref, NULL, childVNode, oldVNode);
+			if (childVNode.ref) {
+				refQueue.push(
+					childVNode.ref,
+					childVNode._component || newDom,
+					childVNode
+				);
 			}
-			refQueue.push(
-				childVNode.ref,
-				childVNode._component || newDom,
-				childVNode
-			);
 		}
+
+		if (oldVNode._parent) oldVNode._parent = NULL;
 
 		firstChildDom = firstChildDom || newDom;
 
@@ -146,8 +154,8 @@ export function diffChildren(
 			oldDom = newDom.nextSibling;
 		}
 
-		// Unset diffing flags
-		childVNode._flags &= ~(INSERT_VNODE | MATCHED);
+		// Clear placement and LIS flags; MATCHED only belongs to old vnodes.
+		childVNode._flags &= ~(INSERT_VNODE | LIS_CANDIDATE);
 	}
 
 	newParentVNode._dom = firstChildDom;
@@ -182,7 +190,7 @@ function constructNewChildrenArray(
 
 	/** Whether any matched child was found far from its skewed index, i.e. a
 	 * real reorder happened and we need to compute the minimal set of moves. */
-	let moved = false;
+	let moved = 0;
 
 	// Hoisted: every normalization branch below writes through this array, so
 	// reading `_children` off the vnode each time is a wasted property load.
@@ -211,14 +219,14 @@ function constructNewChildrenArray(
 		// objects are the lone object type rendered as text.
 		else if (
 			typeof childVNode != 'object' ||
-			childVNode.constructor == String
+			childVNode.constructor === String
 		) {
 			childVNode = newChildren[i] = createVNode(NULL, childVNode);
 		} else if (isArray(childVNode)) {
 			childVNode = newChildren[i] = createVNode(Fragment, {
 				children: childVNode
 			});
-		} else if (childVNode.constructor === UNDEFINED && childVNode._depth) {
+		} else if (childVNode.constructor === VNODE_MARKER && childVNode._depth) {
 			// VNode is already in use, clone it. This can happen in the following
 			// scenario:
 			//   const reuse = <div />
@@ -295,16 +303,12 @@ function constructNewChildrenArray(
 				childVNode._flags |= INSERT_VNODE;
 			}
 		} else {
-			// Matched children are candidates for the minimal-move pass below;
-			// MATCHED on a _new_ vnode is cleared in diffChildren's placement loop.
-			childVNode._flags |= MATCHED;
+			// Keep LIS eligibility separate from MATCHED on old vnodes: if a child
+			// throws, uncleared new-vnode flags must not prevent the next match.
+			childVNode._flags |= LIS_CANDIDATE;
 
-			// The skew adjustments keep findMatchingIndex's search centered for
-			// shift patterns (insertions/removals at the front). A match further
-			// than one position away means children were genuinely reordered:
-			// flag it so the minimal set of moves is computed below. Off-by-one
-			// matches provably keep matched old indices in increasing order, so
-			// no moves are needed for them.
+			// Center the next search for shifts. Only matches farther than one
+			// position away require the minimal-move pass.
 			if (matchingIndex == skewedIndex - 1) {
 				skew--;
 			} else if (matchingIndex == skewedIndex + 1) {
@@ -316,13 +320,13 @@ function constructNewChildrenArray(
 					skew++;
 				}
 
-				moved = true;
+				moved = 1;
 			}
 		}
 	}
 
 	if (moved) {
-		// Children were reordered: mark the minimal set of matched (MATCHED flag)
+		// Children were reordered: mark the minimal set of matched (LIS_CANDIDATE flag)
 		// children for insertion by finding the longest increasing subsequence of
 		// old indices (patience sorting). Children on the subsequence stay in
 		// place, all others get INSERT_VNODE. `_index` still holds the
@@ -333,21 +337,21 @@ function constructNewChildrenArray(
 		let lisLengths = [];
 		for (i = 0; i < newChildrenLength; i++) {
 			childVNode = newChildren[i];
-			if (childVNode && childVNode._flags & MATCHED) {
+			if (childVNode && childVNode._flags & LIS_CANDIDATE) {
 				// Binary search for the insertion point, keeping the pass at
 				// O(n log n) even for pathological reorders.
-				let lo = 0,
-					hi = tails.length;
-				while (lo < hi) {
-					const mid = (lo + hi) >> 1;
+				skew = 0;
+				let hi = tails.length;
+				while (skew < hi) {
+					const mid = (skew + hi) >> 1;
 					if (tails[mid] < childVNode._index) {
-						lo = mid + 1;
+						skew = mid + 1;
 					} else {
 						hi = mid;
 					}
 				}
-				tails[lo] = childVNode._index;
-				lisLengths[i] = lo + 1;
+				tails[skew] = childVNode._index;
+				lisLengths[i] = skew + 1;
 			}
 		}
 
@@ -426,6 +430,7 @@ function insert(parentVNode, oldDom, parentDom, isMounting) {
 		// unmounted earlier in the same diff, mirroring the plain-branch.
 		if (oldDom && parentVNode.type && !oldDom.parentNode) {
 			oldDom = getDomSibling(parentVNode);
+			if (oldDom && !oldDom.parentNode) oldDom = NULL;
 		}
 		// When the cross-slot node is already at the cursor position, inserting
 		// before itself corrupts BSI linked lists. Use nextSibling instead —
@@ -436,21 +441,37 @@ function insert(parentVNode, oldDom, parentDom, isMounting) {
 				NULL
 		);
 		oldDom = parentVNode._dom;
-	} else if (parentVNode._dom != oldDom) {
-		if (oldDom && parentVNode.type && !oldDom.parentNode) {
+	} else {
+		// A cursor a parked Suspense subtree detached can't be a reference node:
+		// retry from the vnode tree, then give up and append.
+		if (oldDom && !oldDom.parentNode) {
 			oldDom = getDomSibling(parentVNode);
+			if (oldDom && !oldDom.parentNode) oldDom = NULL;
 		}
 
-		if (HAS_MOVE_BEFORE_SUPPORT && !isMounting) {
-			// @ts-expect-error This isn't added to TypeScript lib.d.ts yet
-			parentDom.moveBefore(parentVNode._dom, oldDom);
-		} else {
-			parentDom.insertBefore(parentVNode._dom, oldDom || NULL);
+		// Comments (e.g. server `$s` markers) are never ours: a node right after
+		// them is already in place.
+		let dom = parentVNode._dom;
+		let next = oldDom;
+		while (next && next.nodeType == 8) next = next.nextSibling;
+
+		if (dom != next) {
+			// Containers that aren't DOM nodes may not implement moveBefore()
+			if (!isMounting && parentDom.moveBefore && dom.parentNode) {
+				// @ts-expect-error This isn't added to TypeScript lib.d.ts yet
+				parentDom.moveBefore(dom, oldDom);
+			} else {
+				parentDom.insertBefore(dom, oldDom || NULL);
+			}
 		}
-		oldDom = parentVNode._dom;
+		oldDom = dom;
 	}
 
-	while ((oldDom = oldDom && oldDom.nextSibling) && oldDom.nodeType == 8);
+	while (
+		(oldDom = oldDom && oldDom.nextSibling) &&
+		oldDom.nodeType == 8 &&
+		!oldDom.data.startsWith('$s')
+	);
 
 	return oldDom;
 }
@@ -521,20 +542,28 @@ function findMatchingIndex(
 	) {
 		return skewedIndex;
 	} else if (shouldSearch) {
-		let x = skewedIndex - 1;
-		let y = skewedIndex + 1;
-		while (x >= 0 || y < oldChildren.length) {
-			const childIndex = x >= 0 ? x-- : y++;
-			oldVNode = oldChildren[childIndex];
+		let x;
+		for (x = skewedIndex - 1; x >= 0; x--) {
+			oldVNode = oldChildren[x];
 			if (
 				oldVNode &&
 				!(oldVNode._flags & MATCHED) &&
 				key == oldVNode.key &&
 				type == oldVNode.type &&
 				oldVNode._slotIndex === newSlot
-			) {
-				return childIndex;
-			}
+			)
+				return x;
+		}
+		for (x = skewedIndex + 1; x < oldChildren.length; x++) {
+			oldVNode = oldChildren[x];
+			if (
+				oldVNode &&
+				!(oldVNode._flags & MATCHED) &&
+				key == oldVNode.key &&
+				type == oldVNode.type &&
+				oldVNode._slotIndex === newSlot
+			)
+				return x;
 		}
 	}
 

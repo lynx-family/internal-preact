@@ -8,9 +8,6 @@ let currentIndex;
 /** @type {import('./internal').Component} */
 let currentComponent;
 
-/** @type {import('./internal').Component} */
-let previousComponent;
-
 /** @type {number} */
 let currentHook = 0;
 
@@ -29,12 +26,10 @@ let unmountCleanups = [];
 // Cast to use internal Options type
 const options = /** @type {import('./internal').Options} */ (_options);
 
-let oldBeforeDiff = options._diff;
 let oldBeforeRender = options._render;
 let oldAfterDiff = options.diffed;
 let oldCommit = options._commit;
 let oldBeforeUnmount = options.unmount;
-let oldRoot = options._root;
 
 // We take the minimum timeout for requestAnimationFrame to ensure that
 // the callback is invoked after the next frame. 35ms is based on a 30hz
@@ -43,34 +38,18 @@ const RAF_TIMEOUT = 35;
 let prevRaf;
 
 /** @type {(vnode: import('./internal').VNode) => void} */
-options._diff = vnode => {
-	currentComponent = null;
-	if (oldBeforeDiff) oldBeforeDiff(vnode);
-};
-
-options._root = (vnode, parentDom) => {
-	if (vnode && parentDom._children && parentDom._children._mask) {
-		vnode._mask = parentDom._children._mask;
-	}
-
-	if (oldRoot) oldRoot(vnode, parentDom);
-};
-
-/** @type {(vnode: import('./internal').VNode) => void} */
 options._render = vnode => {
 	if (oldBeforeRender) oldBeforeRender(vnode);
 
-	currentComponent = vnode._component;
-	currentIndex = 0;
-
-	const hooks = currentComponent.__hooks;
+	const component = vnode._component;
+	const hooks = component.__hooks;
 	if (hooks) {
-		if (previousComponent == currentComponent) {
-			currentComponent._renderCallbacks = [];
+		// Still current: the render loop is running this component again.
+		if (currentComponent == component) {
+			component._renderCallbacks = [];
 		} else {
 			hooks._pendingEffects.some(invokeCleanup);
 			hooks._pendingEffects.some(invokeEffect);
-			currentIndex = 0;
 		}
 		hooks._pendingEffects = [];
 
@@ -83,7 +62,10 @@ options._render = vnode => {
 			hookItem._pendingArgs = hookItem._nextValue = undefined;
 		});
 	}
-	previousComponent = currentComponent;
+
+	// Set last: an effect flushed above can render another root.
+	currentComponent = component;
+	currentIndex = 0;
 };
 
 /** @type {(vnode: import('./internal').VNode) => void} */
@@ -99,7 +81,7 @@ options.diffed = vnode => {
 			if (hookItem._pendingArgs) hookItem._args = hookItem._pendingArgs;
 		});
 	}
-	previousComponent = currentComponent = null;
+	currentComponent = null;
 };
 
 // TODO: Improve typing of commitQueue parameter
@@ -112,11 +94,13 @@ options._commit = (vnode, commitQueue) => {
 				cb._value ? invokeEffect(cb) : true
 			);
 		} catch (e) {
-			commitQueue.some(c => {
-				if (c._renderCallbacks) c._renderCallbacks = [];
-			});
-			commitQueue = [];
-			options._catchError(e, component._vnode);
+			// Only this component skips its remaining effects, commitRoot rethrows
+			// the error to its boundary after the others ran.
+			component._renderCallbacks = [
+				() => {
+					throw e;
+				}
+			];
 		}
 	});
 
@@ -162,12 +146,12 @@ options.unmount = vnode => {
 };
 
 /**
- * Get a hook's state from the currentComponent
- * @param {number} index The index of the hook to get
+ * Get the state of the next hook of the currentComponent
  * @param {number} type The type of the hook to get
  * @returns {any}
  */
-function getHookState(index, type) {
+function getHookState(type) {
+	const index = currentIndex++;
 	if (options._hook) {
 		options._hook(currentComponent, index, currentHook || type);
 	}
@@ -185,11 +169,7 @@ function getHookState(index, type) {
 			_pendingEffects: []
 		});
 
-	if (index >= hooks._list.length) {
-		hooks._list.push({});
-	}
-
-	return hooks._list[index];
+	return hooks._list[index] || (hooks._list[index] = {});
 }
 
 /**
@@ -212,16 +192,14 @@ export function useState(initialState) {
  */
 export function useReducer(reducer, initialState, init) {
 	/** @type {import('./internal').ReducerHookState} */
-	const hookState = getHookState(currentIndex++, 2);
+	const hookState = getHookState(2);
 	hookState._reducer = reducer;
 	if (!hookState._component) {
 		hookState._value = [
 			!init ? invokeOrReturn(undefined, initialState) : init(initialState),
 
 			action => {
-				const currentValue = hookState._nextValue
-					? hookState._nextValue[0]
-					: hookState._value[0];
+				const currentValue = (hookState._nextValue || hookState._value)[0];
 				const nextValue = hookState._reducer(currentValue, action);
 
 				if (!ObjectIs(currentValue, nextValue)) {
@@ -280,7 +258,7 @@ export function useReducer(reducer, initialState, init) {
  */
 export function useEffect(callback, args) {
 	/** @type {import('./internal').EffectHookState} */
-	const state = getHookState(currentIndex++, 3);
+	const state = getHookState(3);
 	if (!options._skipEffects && argsChanged(state._args, args)) {
 		state._passive = true;
 		state._value = callback;
@@ -297,8 +275,9 @@ export function useEffect(callback, args) {
  */
 export function useLayoutEffect(callback, args) {
 	/** @type {import('./internal').EffectHookState} */
-	const state = getHookState(currentIndex++, 4);
+	const state = getHookState(4);
 	if (!options._skipEffects && argsChanged(state._args, args)) {
+		state._passive = false;
 		state._value = callback;
 		state._pendingArgs = args;
 
@@ -326,7 +305,7 @@ export function useImperativeHandle(ref, createHandle, args) {
 				const result = ref(createHandle());
 				return () => {
 					ref(null);
-					if (result && typeof result == 'function') result();
+					if (typeof result == 'function') result();
 				};
 			} else if (ref) {
 				ref.current = createHandle();
@@ -345,7 +324,7 @@ export function useImperativeHandle(ref, createHandle, args) {
  */
 export function useMemo(factory, args) {
 	/** @type {import('./internal').MemoHookState<T>} */
-	const state = getHookState(currentIndex++, 7);
+	const state = getHookState(7);
 	if (argsChanged(state._args, args)) {
 		state._value = factory();
 		state._args = args;
@@ -373,7 +352,7 @@ export function useContext(context) {
 	// `options._hook`. We need to do that in order to make
 	// the devtools aware of this hook.
 	/** @type {import('./internal').ContextHookState} */
-	const state = getHookState(currentIndex++, 9);
+	const state = getHookState(9);
 	// The devtools needs access to the context object to
 	// be able to pull of the default value when no provider
 	// is present in the tree.
@@ -405,7 +384,7 @@ export function useDebugValue(value, formatter) {
  */
 export function useErrorBoundary(cb) {
 	/** @type {import('./internal').ErrorBoundaryHookState} */
-	const state = getHookState(currentIndex++, 10);
+	const state = getHookState(10);
 	const errState = useState();
 	state._value = cb;
 	if (!currentComponent.componentDidCatch) {
@@ -414,25 +393,22 @@ export function useErrorBoundary(cb) {
 			errState[1](err);
 		};
 	}
-	return [
-		errState[0],
-		() => {
-			errState[1](undefined);
-		}
-	];
+	return [errState[0], () => errState[1]()];
 }
 
 /** @type {() => string} */
 export function useId() {
 	/** @type {import('./internal').IdHookState} */
-	const state = getHookState(currentIndex++, 11);
+	const state = getHookState(11);
 	if (!state._value) {
-		// Grab either the root node or the nearest async boundary node.
-		/** @type {import('./internal').VNode} */
+		// Grab either the root node or the nearest Suspense boundary. Both keep
+		// their mask on the component: their vnodes get replaced, it doesn't.
+		/** @type {import('./internal').VNode | import('./internal').Component} */
 		let root = currentComponent._vnode;
-		while (!root._mask && root._parent) {
+		while (!(root._component || root)._mask && root._parent) {
 			root = root._parent;
 		}
+		root = root._component || root;
 
 		let mask = root._mask || (root._mask = [0, 0]);
 		state._value = 'P' + mask[0] + '-' + mask[1]++;
@@ -495,7 +471,7 @@ let HAS_RAF = typeof requestAnimationFrame == 'function';
  * Do this by combining requestAnimationFrame (rAF) + setTimeout to invoke a callback after
  * the next browser frame.
  *
- * Also, schedule a timeout in parallel to the the rAF to ensure the callback is invoked
+ * Also, schedule a timeout in parallel to the rAF to ensure the callback is invoked
  * even if RAF doesn't fire (for example if the browser tab is not visible)
  *
  * @param {() => void} callback
@@ -507,11 +483,8 @@ function afterNextFrame(callback) {
 		setTimeout(callback);
 	};
 	const timeout = setTimeout(done, RAF_TIMEOUT);
-
-	let raf;
-	if (HAS_RAF) {
-		raf = requestAnimationFrame(done);
-	}
+	// `var`: a synchronous rAF makes `done` read it before it is assigned.
+	var raf = HAS_RAF && requestAnimationFrame(done);
 }
 
 // Note: if someone used options.debounceRendering = requestAnimationFrame,
@@ -534,16 +507,11 @@ function afterPaint(newQueueLength) {
  * @returns {void}
  */
 function invokeCleanup(hook) {
-	// A hook cleanup can introduce a call to render which creates a new root, this will call options.vnode
-	// and move the currentComponent away.
-	const comp = currentComponent;
 	let cleanup = hook._cleanup;
 	if (typeof cleanup == 'function') {
 		hook._cleanup = undefined;
 		cleanup();
 	}
-
-	currentComponent = comp;
 }
 
 /**
@@ -552,11 +520,7 @@ function invokeCleanup(hook) {
  * @returns {void}
  */
 function invokeEffect(hook) {
-	// A hook call can introduce a call to render which creates a new root, this will call options.vnode
-	// and move the currentComponent away.
-	const comp = currentComponent;
 	hook._cleanup = hook._value();
-	currentComponent = comp;
 }
 
 /**

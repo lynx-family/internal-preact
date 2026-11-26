@@ -19,7 +19,6 @@ export interface Options extends PreactOptions {
 	diffed?(vnode: VNode): void;
 	/** Attach a hook that is invoked after a tree was mounted or was updated. */
 	_commit?(vnode: VNode, commitQueue: Component[]): void;
-	_unmount?(vnode: VNode): void;
 	/** Attach a hook that is invoked before a hook's state is queried. */
 	_hook?(component: Component, index: number, type: HookType): void;
 }
@@ -38,13 +37,14 @@ export interface Component extends Omit<
 	'_renderCallbacks'
 > {
 	__hooks?: ComponentHooks;
+	_mask?: [number | string, number];
 	// Extend to include HookStates
 	_renderCallbacks?: Array<HookState | (() => void)>;
 	_hasScuFromHooks?: boolean;
 }
 
 export interface VNode extends Omit<PreactVNode, '_component'> {
-	_mask?: [number, number];
+	_mask?: [number | string, number];
 	_component?: Component; // Override with our specific Component type
 }
 
@@ -59,7 +59,6 @@ export type HookState =
 interface BaseHookState {
 	_value?: unknown;
 	_nextValue?: unknown;
-	_pendingValue?: unknown;
 	_args?: unknown;
 	_pendingArgs?: unknown;
 	_component?: unknown;
@@ -84,7 +83,6 @@ export interface EffectHookState extends BaseHookState {
 
 export interface MemoHookState<T = unknown> extends BaseHookState {
 	_value?: T;
-	_pendingValue?: T;
 	_args?: unknown[];
 	_pendingArgs?: unknown[];
 }
