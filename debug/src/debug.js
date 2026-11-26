@@ -15,6 +15,14 @@ import { isNaN } from './util';
 
 const isWeakMapSupported = typeof WeakMap == 'function';
 
+// Lynx JS runtimes are not browsers: `queueMicrotask` (an HTML API) may be
+// missing, so fall back to a Promise-based microtask.
+/** @param {() => void} cb */
+const defer = cb =>
+	typeof queueMicrotask == 'function'
+		? queueMicrotask(cb)
+		: Promise.resolve().then(cb);
+
 /**
  * @param {import('./internal').VNode} vnode
  * @returns {Array<string>}
@@ -173,7 +181,7 @@ export function initDebug() {
 			// Logged once the throw has unwound, so that an outer tree catching it
 			// (around a nested `render()`) can still cancel the report. Its own
 			// stack only points into Preact, so name the component it came from.
-			queueMicrotask(() => {
+			defer(() => {
 				if (!report.done) {
 					const owner = getOwningComponent(report.vnode);
 					console.error(

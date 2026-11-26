@@ -1066,4 +1066,22 @@ describe('debug', () => {
 			expect(console.error).not.toHaveBeenCalled();
 		});
 	});
+
+	it('should preserve original render error when queueMicrotask is unavailable', async () => {
+		const originalQueueMicrotask = globalThis.queueMicrotask;
+		// @ts-ignore
+		delete globalThis.queueMicrotask;
+		const Throwing = () => {
+			throw new Error('original render boom');
+		};
+		try {
+			expect(() => render(<Throwing />, scratch)).toThrow(
+				'original render boom'
+			);
+			await Promise.resolve();
+			expect(console.error).toHaveBeenCalledOnce();
+		} finally {
+			globalThis.queueMicrotask = originalQueueMicrotask;
+		}
+	});
 });

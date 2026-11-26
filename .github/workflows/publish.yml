@@ -20,10 +20,12 @@ jobs:
         with:
           node-version: '22.x'
           registry-url: 'https://registry.npmjs.org'
+          package-manager-cache: false
 
       - name: Add dependencies
         run: |
-          npm install tar-stream@3.1.7
+          echo '{"private":true}' > scripts/release/package.json
+          npm install --prefix scripts/release tar-stream@3.1.7
 
       # https://docs.npmjs.com/trusted-publishers#step-2-configure-your-cicd-workflow
       # Ensure npm 11.5.1 or later is installed

@@ -1,9 +1,8 @@
 import { execFileSync } from 'child_process';
 import fs from 'fs';
-import { fetch, stream } from 'undici';
-import sade from 'sade';
-import { modifyPackageJSON } from './modify-package-json.mjs';
 import { Readable } from 'stream';
+import { parseArgs } from 'util';
+import { modifyPackageJSON } from './modify-package-json.mjs';
 
 let DEBUG = false;
 const log = {
@@ -74,8 +73,14 @@ async function main(tag, opts) {
 	log.info(`\nDownloading ${packageAsset.name}...`);
 	const downloadResponse = await fetch(packageAsset.browser_download_url, {
 		method: 'GET',
-		maxRedirections: 30
+		redirect: 'follow'
 	});
+
+	if (!downloadResponse.ok) {
+		throw new Error(
+			`Failed to download release asset: ${downloadResponse.status} ${downloadResponse.statusText}`
+		);
+	}
 
 	if (!downloadResponse.body) {
 		throw new Error('Download response body is empty.');
@@ -88,8 +93,10 @@ async function main(tag, opts) {
 		name: '@lynx-js/internal-preact'
 	}));
 
-	// Convert undici's ReadableStream to Node.js Readable stream
-	const downloadReadable = Readable.fromWeb(downloadResponse.body);
+	// Convert Web ReadableStream to Node.js Readable stream
+	const downloadReadable = Readable.fromWeb(
+		/** @type {import('stream/web').ReadableStream} */ (downloadResponse.body)
+	);
 
 	// Pipe the download stream into the modifyInputStream
 	downloadReadable.pipe(modifyInputStream);
@@ -115,14 +122,23 @@ async function main(tag, opts) {
 	}
 }
 
-sade('publish <git-tag>', true)
-	.describe('Publish a tagged version of this package')
-	.option('--npm-tag', 'The npm tag to publish this package under', '')
-	.option(
-		'--dry-run',
-		"Prepare the package for publishing but don't actually publish it",
-		false
-	)
-	.option('--debug -d', 'Log debugging information', false)
-	.action(main)
-	.parse(process.argv);
+const { values, positionals } = parseArgs({
+	allowPositionals: true,
+	options: {
+		'npm-tag': { type: 'string', default: '' },
+		'dry-run': { type: 'boolean', default: false },
+		debug: { type: 'boolean', short: 'd', default: false }
+	}
+});
+
+if (!positionals[0]) {
+	console.error(
+		'Usage: node scripts/release/publish.mjs <git-tag> [--npm-tag <tag>] [--dry-run] [--debug|-d]'
+	);
+	process.exit(1);
+}
+
+main(positionals[0], values).catch(err => {
+	log.error(err);
+	process.exit(1);
+});
