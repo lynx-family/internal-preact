@@ -1,9 +1,11 @@
 import { expect, describe } from 'vitest';
 import { options } from 'preact';
+import srcOptions from './src/options';
 
 // The Lynx fork replaced `document.createElementNS` with `options.document.createElementNS`
 // so a host runtime can inject its own document. For browser tests, point it at the real one.
-options.document = document;
+// Also set it on `src/options` for tests that import `../../src/` directly under MINIFY=true.
+options.document = srcOptions.document = document;
 
 globalThis.context = describe;
 

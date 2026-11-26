@@ -3,7 +3,7 @@ import {
 	COMPONENT_FORCE,
 	MODE_HYDRATE,
 	NULL,
-	UNDEFINED
+	VNODE_MARKER
 } from './constants';
 import { Fragment } from './create-element';
 import { commitRoot, diff } from './diff/index';
@@ -95,9 +95,7 @@ BaseComponent.prototype.render = Fragment;
 export function getDomSibling(vnode, childIndex) {
 	if (childIndex == NULL) {
 		// Use childIndex==null as a signal to resume the search from the vnode's sibling
-		return vnode._parent
-			? getDomSibling(vnode._parent, vnode._index + 1)
-			: NULL;
+		return vnode._parent && getDomSibling(vnode._parent, vnode._index + 1);
 	}
 
 	let sibling;
@@ -105,7 +103,7 @@ export function getDomSibling(vnode, childIndex) {
 		sibling = vnode._children[childIndex];
 
 		if (sibling && sibling._dom) {
-			// Since updateParentDomPointers keeps _dom pointer correct,
+			// Since process() keeps the _dom pointers correct,
 			// we can rely on _dom to tell us if this subtree contains a
 			// rendered DOM node, and what the first rendered DOM node is
 			return sibling._dom;
@@ -120,63 +118,6 @@ export function getDomSibling(vnode, childIndex) {
 	return typeof vnode.type == 'function' && !vnode.props._parentDom
 		? getDomSibling(vnode)
 		: NULL;
-}
-
-/**
- * Trigger in-place re-rendering of a component.
- * @param {import('./internal').Component} component The component to rerender
- */
-function renderComponent(component) {
-	const oldVNode = component._vnode,
-		oldDom = oldVNode._dom,
-		commitQueue = [],
-		refQueue = [];
-
-	const parentDom = component._parentDom;
-	if (parentDom) {
-		const newVNode = assign({ constructor: UNDEFINED }, oldVNode);
-		newVNode._original = oldVNode._original + 1;
-		if (options.vnode) options.vnode(newVNode);
-		if (options.renderComponent) options.renderComponent(newVNode, component);
-
-		diff(
-			parentDom,
-			newVNode,
-			oldVNode,
-			component._globalContext,
-			parentDom.namespaceURI,
-			newVNode._slotIndex,
-			oldVNode._flags & MODE_HYDRATE ? [oldDom] : NULL,
-			commitQueue,
-			oldDom || getDomSibling(oldVNode),
-			oldVNode._flags & MODE_HYDRATE,
-			refQueue
-		);
-
-		newVNode._original = oldVNode._original;
-		newVNode._parent._children[newVNode._index] = newVNode;
-		commitRoot(commitQueue, newVNode, refQueue);
-		oldVNode._parent = oldVNode._dom = NULL;
-
-		if (newVNode._dom != oldDom) {
-			updateParentDomPointers(newVNode);
-		}
-	}
-}
-
-/**
- * @param {import('./internal').VNode} vnode
- */
-function updateParentDomPointers(vnode) {
-	// Stop at root boundaries (_parentDom)
-	if ((vnode = vnode._parent) && vnode._component && !vnode.props._parentDom) {
-		// _dom starts nulled, so re-assigning a null child._dom is a no-op and
-		// the first truthy _dom stops the walk.
-		vnode._dom = NULL;
-		vnode._children.some(child => child && (vnode._dom = child._dom));
-
-		return updateParentDomPointers(vnode);
-	}
 }
 
 /**
@@ -240,7 +181,13 @@ export function process() {
 	'background only';
 	try {
 		let c,
-			l = 1;
+			l = 1,
+			oldVNode,
+			newVNode,
+			oldDom,
+			parentDom,
+			commitQueue,
+			refQueue;
 
 		// Don't update `renderCount` yet. Keep its value non-zero to prevent unnecessary
 		// process() calls from getting scheduled while `queue` is still being consumed.
@@ -258,11 +205,56 @@ export function process() {
 			c = rerenderQueue.shift();
 			l = rerenderQueue.length;
 
-			if (c._bits & COMPONENT_DIRTY) {
-				renderComponent(c);
+			// Re-render the component in place, unless it was unmounted.
+			if (c._bits & COMPONENT_DIRTY && (parentDom = c._parentDom)) {
+				oldVNode = c._vnode;
+				oldDom = oldVNode._dom;
+				commitQueue = [];
+				refQueue = [];
+				newVNode = assign({ constructor: VNODE_MARKER }, oldVNode);
+				newVNode._original = oldVNode._original + 1;
+				if (options.vnode) options.vnode(newVNode);
+				if (options.renderComponent) options.renderComponent(newVNode, c);
+
+				diff(
+					parentDom,
+					newVNode,
+					oldVNode,
+					c._globalContext,
+					parentDom.namespaceURI,
+					newVNode._slotIndex,
+					oldVNode._flags & MODE_HYDRATE ? [oldDom] : NULL,
+					commitQueue,
+					oldDom || getDomSibling(oldVNode),
+					oldVNode._flags & MODE_HYDRATE,
+					refQueue
+				);
+
+				newVNode._original = oldVNode._original;
+				newVNode._parent._children[newVNode._index] = newVNode;
+				commitRoot(commitQueue, newVNode, refQueue);
+				oldVNode._parent = oldVNode._dom = NULL;
+
+				// Stop at root boundaries (_parentDom)
+				if (newVNode._dom != oldDom) {
+					while (
+						(newVNode = newVNode._parent) &&
+						newVNode._component &&
+						!newVNode.props._parentDom
+					) {
+						// _dom starts nulled, so re-assigning a null child._dom is a no-op and
+						// the first truthy _dom stops the walk.
+						newVNode._dom = NULL;
+						newVNode._children.some(
+							child => child && (newVNode._dom = child._dom)
+						);
+					}
+				}
 			}
 		}
 	} finally {
-		rerenderQueue.length = rerenderCount = 0;
+		if ((rerenderCount = rerenderQueue.length)) {
+			(prevDebounce || defer)(process);
+		}
 	}
 }

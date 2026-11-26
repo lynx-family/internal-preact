@@ -53,3 +53,26 @@ React.Children.forEach([<div />], () => {});
 React.Children.map([<div />], () => 'child', {});
 React.Children.forEach([<div />], () => {}, {});
 mappedChildren.length;
+
+// React-style attribute interfaces can be spread onto their element
+export function TextField(props: React.InputHTMLAttributes<HTMLInputElement>) {
+	return <input {...props} />;
+}
+export function Link(props: React.AnchorHTMLAttributes<HTMLAnchorElement>) {
+	return <a {...props} />;
+}
+export function Picture(props: React.ImgHTMLAttributes<HTMLImageElement>) {
+	return <img {...props} />;
+}
+export function Field(props: React.ComponentPropsWithoutRef<'input'>) {
+	return <input {...props} />;
+}
+
+// isValidElement and isElement narrow to an element like in React
+const maybeElement: React.ReactNode = <div title="x" />;
+if (React.isValidElement(maybeElement)) {
+	maybeElement.props;
+}
+if (React.isElement(maybeElement)) {
+	maybeElement.props;
+}

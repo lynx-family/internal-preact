@@ -127,6 +127,28 @@ describe('hydrate()', () => {
 		expect(getLog()).to.deep.equal(['Comment.remove()']);
 	});
 
+	it('should not move nodes that follow comment nodes', () => {
+		scratch.innerHTML = '<p><!-- a --><i>0</i><!-- b --><!-- c --><b>1</b></p>';
+		const i = scratch.querySelector('i');
+		const b = scratch.querySelector('b');
+		clearLog();
+		hydrate(
+			<p>
+				<i>0</i>
+				<b>1</b>
+			</p>,
+			scratch
+		);
+		expect(scratch.innerHTML).to.equal('<p><i>0</i><b>1</b></p>');
+		expect(scratch.querySelector('i')).to.equal(i);
+		expect(scratch.querySelector('b')).to.equal(b);
+		expect(getLog()).to.deep.equal([
+			'Comment.remove()',
+			'Comment.remove()',
+			'Comment.remove()'
+		]);
+	});
+
 	it.skip('should reuse existing DOM when given components', () => {
 		const onClickSpy = vi.fn();
 		const html = ul([li('1'), li('2'), li('3')]);
@@ -590,6 +612,32 @@ describe('hydrate()', () => {
 		expect(caught.message).to.equal('real error');
 	});
 
+	for (const [tag, childTag, namespace] of [
+		['svg', 'g', 'http://www.w3.org/2000/svg'],
+		['math', 'mrow', 'http://www.w3.org/1998/Math/MathML']
+	]) {
+		it(`should hydrate <template> in ${tag}`, () => {
+			scratch.innerHTML = `<${tag}><template><${childTag}>child</${childTag}></template></${tag}>`;
+			const template = scratch.firstChild.firstChild;
+			const child = template.firstChild;
+			const vnode = createElement(
+				tag,
+				null,
+				createElement('template', null, createElement(childTag, null, 'child'))
+			);
+
+			hydrate(vnode, scratch);
+
+			expect(scratch.firstChild.firstChild).to.equal(template);
+			expect(template.namespaceURI).to.equal(namespace);
+			expect(template.content).to.equal(undefined);
+			expect(template.childNodes).to.have.length(1);
+			expect(template.firstChild).to.equal(child);
+			expect(child.namespaceURI).to.equal(namespace);
+			expect(template.textContent).to.equal('child');
+		});
+	}
+
 	it('should hydrate <template> tags', () => {
 		function App() {
 			return (
@@ -608,5 +656,45 @@ describe('hydrate()', () => {
 			'<template><h1>it works</h1></template>'
 		);
 		expect(scratch.firstChild.content.firstChild).to.equal(h1);
+	});
+});
+
+describe('hydrate() with non-vnode children', () => {
+	/** @type {HTMLElement} */
+	let scratch;
+
+	beforeEach(() => {
+		scratch = setupScratch();
+	});
+
+	afterEach(() => {
+		teardown(scratch);
+	});
+
+	it('should hydrate a string', () => {
+		scratch.innerHTML = 'text';
+		const text = scratch.firstChild;
+
+		hydrate('text', scratch);
+		expect(scratch.innerHTML).to.equal('text');
+		expect(scratch.firstChild).to.equal(text);
+	});
+
+	it('should hydrate a number', () => {
+		scratch.innerHTML = '0';
+		const text = scratch.firstChild;
+
+		hydrate(0, scratch);
+		expect(scratch.innerHTML).to.equal('0');
+		expect(scratch.firstChild).to.equal(text);
+	});
+
+	it('should hydrate null, undefined and booleans like Preact 10', () => {
+		for (const child of [null, undefined, false, true]) {
+			scratch.innerHTML = '<p>ssr</p>';
+			delete scratch._children;
+			expect(() => hydrate(child, scratch)).not.to.throw();
+			expect(scratch.innerHTML).to.equal('<p>ssr</p>');
+		}
 	});
 });

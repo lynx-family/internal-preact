@@ -1,5 +1,5 @@
 import { checkPropTypes } from './check-props';
-import { options, Component } from 'preact';
+import { options, Component, Fragment } from 'preact';
 import {
 	ELEMENT_NODE,
 	DOCUMENT_NODE,
@@ -15,24 +15,37 @@ import { isNaN } from './util';
 
 const isWeakMapSupported = typeof WeakMap == 'function';
 
+// Lynx JS runtimes are not browsers: `queueMicrotask` (an HTML API) may be
+// missing, so fall back to a Promise-based microtask.
+/** @param {() => void} cb */
+const defer = cb =>
+	typeof queueMicrotask == 'function'
+		? queueMicrotask(cb)
+		: Promise.resolve().then(cb);
+
 /**
  * @param {import('./internal').VNode} vnode
  * @returns {Array<string>}
  */
-function getDomChildren(vnode) {
-	let domChildren = [];
+function getDomDescendants(vnode) {
+	let domDescendants = /** @type {string[]} */ ([]);
 
-	if (!vnode._children) return domChildren;
+	if (!vnode._children) return domDescendants;
 
 	vnode._children.forEach(child => {
-		if (child && typeof child.type === 'function') {
-			domChildren.push.apply(domChildren, getDomChildren(child));
-		} else if (child && typeof child.type === 'string') {
-			domChildren.push(child.type);
+		if (!child) return;
+		if (typeof child.type === 'function') {
+			// Portal children are mounted into another DOM parent (v11 keeps
+			// them in the vnode tree), so they are not DOM children of `vnode`.
+			if (child.props._parentDom) return;
+			domDescendants.push.apply(domDescendants, getDomDescendants(child));
+		} else if (typeof child.type === 'string') {
+			domDescendants.push(child.type);
+			domDescendants.push.apply(domDescendants, getDomDescendants(child));
 		}
 	});
 
-	return domChildren;
+	return domDescendants;
 }
 
 /**
@@ -42,6 +55,11 @@ function getDomChildren(vnode) {
 function getClosestDomNodeParentName(parent) {
 	if (!parent) return '';
 	if (typeof parent.type == 'function') {
+		// Crossing a portal boundary: the DOM parent is the portal container.
+		// ShadowRoot/DocumentFragment containers have no localName -> skip.
+		if (parent.props._parentDom) {
+			return parent.props._parentDom.localName || '';
+		}
 		if (parent._parent == null) {
 			if (parent._dom != null && parent._dom.parentNode != null) {
 				return parent._dom.parentNode.localName;
@@ -79,6 +97,20 @@ function getRenderRoot(component) {
 	return rootDom.nodeType === DOCUMENT_NODE ? rootDom.documentElement : rootDom;
 }
 
+/**
+ * The closest component to `vnode`: errors from refs and from unmounted
+ * components' cleanups arrive with a DOM or placeholder vnode.
+ * @param {import('./internal').VNode} vnode
+ * @returns {import('./internal').VNode}
+ */
+function getOwningComponent(vnode) {
+	let owner = vnode;
+	while (owner && (typeof owner.type != 'function' || owner.type == Fragment)) {
+		owner = owner._parent;
+	}
+	return owner || vnode;
+}
+
 export function initDebug() {
 	setupComponentStack();
 
@@ -104,38 +136,67 @@ export function initDebug() {
 	const deprecations = [];
 	const passiveUpdateStreaks = isWeakMapSupported ? new WeakMap() : null;
 	const passiveBatches = [];
+	/** @type {{ error: any, vnode: import('./internal').VNode, done?: boolean }} */
+	let escaping;
 
 	options._catchError = (error, vnode, oldVNode, errorInfo) => {
-		let component = vnode && vnode._component;
-		if (component && typeof error.then == 'function') {
-			const promise = error;
-			error = new Error(
-				`Missing Suspense. The throwing component was: ${getDisplayName(vnode)}`
-			);
+		// A frame below already reported this error as escaping, and this one
+		// gets to decide what happens to it now.
+		const previous = escaping && escaping.error === error && escaping;
+		if (previous) previous.done = true;
 
-			let parent = vnode;
-			for (; parent; parent = parent._parent) {
-				if (parent._component && parent._component._childDidSuspend) {
-					error = promise;
-					break;
+		try {
+			let component = vnode && vnode._component;
+			if (component && error && typeof error.then == 'function') {
+				const promise = error;
+				error = new Error(
+					`Missing Suspense. The throwing component was: ${getDisplayName(vnode)}`
+				);
+
+				let parent = vnode;
+				for (; parent; parent = parent._parent) {
+					if (parent._component && parent._component._childDidSuspend) {
+						error = promise;
+						break;
+					}
+				}
+
+				// We haven't recovered and we know at this point that there is no
+				// Suspense component higher up in the tree
+				if (error instanceof Error) {
+					throw error;
 				}
 			}
 
-			// We haven't recovered and we know at this point that there is no
-			// Suspense component higher up in the tree
-			if (error instanceof Error) {
-				throw error;
-			}
+			errorInfo = errorInfo || {};
+			errorInfo.componentStack = getOwnerStack(vnode);
+			oldCatchError(error, vnode, oldVNode, errorInfo);
+		} catch (e) {
+			const report = (escaping = {
+				error: e,
+				// Keep pointing at the component that threw while the error passes
+				// unchanged through the frames above it.
+				vnode: previous && e === previous.error ? previous.vnode : vnode
+			});
+			// Logged once the throw has unwound, so that an outer tree catching it
+			// (around a nested `render()`) can still cancel the report. Its own
+			// stack only points into Preact, so name the component it came from.
+			defer(() => {
+				if (!report.done) {
+					const owner = getOwningComponent(report.vnode);
+					console.error(
+						`An error occurred in the <${getDisplayName(owner)}> component, and no error boundary handled it.\n\n${getOwnerStack(owner)}`
+					);
+				}
+				if (escaping == report) escaping = undefined;
+			});
+			throw e;
 		}
-
-		errorInfo = errorInfo || {};
-		errorInfo.componentStack = getOwnerStack(vnode);
-		oldCatchError(error, vnode, oldVNode, errorInfo);
 
 		// when an error was handled by an ErrorBoundary we still log it, matching what
 		// React does in development. Errors that were not handled are rethrown by the
 		// core and thus surface as regular uncaught errors.
-		if (typeof error.then != 'function') {
+		if (!error || typeof error.then != 'function') {
 			console.error(error);
 		}
 	};
@@ -189,9 +250,12 @@ export function initDebug() {
 	};
 
 	options._diff = vnode => {
+		// Unwinding never diffs, so whatever was escaping has finished doing so.
+		escaping = undefined;
+
 		let { type } = vnode;
 
-		hooksAllowed = true;
+		hooksAllowed = false;
 
 		if (type === undefined) {
 			throw new Error(
@@ -513,8 +577,8 @@ export function initDebug() {
 					);
 				}
 			} else if (type === 'p') {
-				let illegalDomChildrenTypes = getDomChildren(vnode).filter(childType =>
-					ILLEGAL_PARAGRAPH_CHILD_ELEMENTS.test(childType)
+				let illegalDomChildrenTypes = getDomDescendants(vnode).filter(
+					childType => ILLEGAL_PARAGRAPH_CHILD_ELEMENTS.has(childType)
 				);
 				if (illegalDomChildrenTypes.length) {
 					console.error(
@@ -526,7 +590,7 @@ export function initDebug() {
 					);
 				}
 			} else if (type === 'a' || type === 'button') {
-				if (getDomChildren(vnode).indexOf(type) !== -1) {
+				if (getDomDescendants(vnode).indexOf(type) !== -1) {
 					console.error(
 						`Improper nesting of interactive content. Your <${type}>` +
 							` should not have other ${type === 'a' ? 'anchor' : 'button'}` +
@@ -621,8 +685,39 @@ function isTableElement(type) {
 	);
 }
 
-const ILLEGAL_PARAGRAPH_CHILD_ELEMENTS =
-	/^(address|article|aside|blockquote|details|div|dl|fieldset|figcaption|figure|footer|form|h1|h2|h3|h4|h5|h6|header|hgroup|hr|main|menu|nav|ol|p|pre|search|section|table|ul)$/;
+const ILLEGAL_PARAGRAPH_CHILD_ELEMENTS = new Set([
+	'address',
+	'article',
+	'aside',
+	'blockquote',
+	'details',
+	'div',
+	'dl',
+	'fieldset',
+	'figcaption',
+	'figure',
+	'footer',
+	'form',
+	'h1',
+	'h2',
+	'h3',
+	'h4',
+	'h5',
+	'h6',
+	'header',
+	'hgroup',
+	'hr',
+	'main',
+	'menu',
+	'nav',
+	'ol',
+	'p',
+	'pre',
+	'search',
+	'section',
+	'table',
+	'ul'
+]);
 
 const forceUpdate = Component.prototype.forceUpdate;
 Component.prototype.forceUpdate = function (callback) {

@@ -6,6 +6,7 @@ import { ClassAttributes, PreactDOMAttributes } from './index';
 interface ToggleEvent extends Event {
 	readonly newState: string;
 	readonly oldState: string;
+	readonly source: Element | null;
 }
 
 declare var ToggleEvent: {
@@ -16,6 +17,7 @@ declare var ToggleEvent: {
 interface ToggleEventInit extends EventInit {
 	newState?: string;
 	oldState?: string;
+	source?: Element | null;
 }
 
 interface CommandEvent extends Event {
@@ -47,6 +49,23 @@ declare var SnapEvent: {
 interface SnapEventInit extends EventInit {
 	snapTargetBlock?: Element | null;
 	snapTargetInline?: Element | null;
+}
+
+/** [MDN Reference](https://developer.mozilla.org/en-US/docs/Web/API/ContentVisibilityAutoStateChangeEvent) */
+interface ContentVisibilityAutoStateChangeEvent extends Event {
+	readonly skipped: boolean;
+}
+
+declare var ContentVisibilityAutoStateChangeEvent: {
+	prototype: ContentVisibilityAutoStateChangeEvent;
+	new (
+		type: string,
+		eventInitDict?: ContentVisibilityAutoStateChangeEventInit
+	): ContentVisibilityAutoStateChangeEvent;
+};
+
+interface ContentVisibilityAutoStateChangeEventInit extends EventInit {
+	skipped?: boolean;
 }
 
 type Booleanish = boolean | 'true' | 'false';
@@ -514,6 +533,11 @@ export type TargetedSnapEvent<Target extends EventTarget> = TargetedEvent<
 	Target,
 	SnapEvent
 >;
+export type TargetedContentVisibilityAutoStateChangeEvent<
+	Target extends EventTarget
+> = TargetedEvent<Target, ContentVisibilityAutoStateChangeEvent>;
+export type TargetedSecurityPolicyViolationEvent<Target extends EventTarget> =
+	TargetedEvent<Target, SecurityPolicyViolationEvent>;
 export type TargetedSubmitEvent<Target extends EventTarget> = TargetedEvent<
 	Target,
 	SubmitEvent
@@ -557,6 +581,9 @@ export type CommandEventHandler<Target extends EventTarget> = EventHandler<
 export type CompositionEventHandler<Target extends EventTarget> = EventHandler<
 	TargetedCompositionEvent<Target>
 >;
+export type ContentVisibilityAutoStateChangeEventHandler<
+	Target extends EventTarget
+> = EventHandler<TargetedContentVisibilityAutoStateChangeEvent<Target>>;
 export type DragEventHandler<Target extends EventTarget> = EventHandler<
 	TargetedDragEvent<Target>
 >;
@@ -581,6 +608,8 @@ export type MouseEventHandler<Target extends EventTarget> = EventHandler<
 export type PointerEventHandler<Target extends EventTarget> = EventHandler<
 	TargetedPointerEvent<Target>
 >;
+export type SecurityPolicyViolationEventHandler<Target extends EventTarget> =
+	EventHandler<TargetedSecurityPolicyViolationEvent<Target>>;
 export type SnapEventHandler<Target extends EventTarget> = EventHandler<
 	TargetedSnapEvent<Target>
 >;
@@ -605,6 +634,23 @@ export type PictureInPictureEventHandler<Target extends EventTarget> =
 export interface DOMAttributes<
 	Target extends EventTarget
 > extends PreactDOMAttributes {
+	onFullscreenChange?: GenericEventHandler<Target> | undefined;
+	onFullscreenChangeCapture?: GenericEventHandler<Target> | undefined;
+	onFullscreenError?: GenericEventHandler<Target> | undefined;
+	onFullscreenErrorCapture?: GenericEventHandler<Target> | undefined;
+	onContentVisibilityAutoStateChange?:
+		| ContentVisibilityAutoStateChangeEventHandler<Target>
+		| undefined;
+	onContentVisibilityAutoStateChangeCapture?:
+		| ContentVisibilityAutoStateChangeEventHandler<Target>
+		| undefined;
+	onSecurityPolicyViolation?:
+		| SecurityPolicyViolationEventHandler<Target>
+		| undefined;
+	onSecurityPolicyViolationCapture?:
+		| SecurityPolicyViolationEventHandler<Target>
+		| undefined;
+
 	// Image Events
 	onLoad?: GenericEventHandler<Target> | undefined;
 	onLoadCapture?: GenericEventHandler<Target> | undefined;
@@ -629,11 +675,19 @@ export interface DOMAttributes<
 
 	// Popover Events
 	onBeforeToggle?: ToggleEventHandler<Target> | undefined;
+	onBeforeToggleCapture?: ToggleEventHandler<Target> | undefined;
 	onToggle?: ToggleEventHandler<Target> | undefined;
+	onToggleCapture?: ToggleEventHandler<Target> | undefined;
+
+	// Hidden-until-found Events
+	onBeforeMatch?: GenericEventHandler<Target> | undefined;
+	onBeforeMatchCapture?: GenericEventHandler<Target> | undefined;
 
 	// Dialog Events
 	onClose?: GenericEventHandler<Target> | undefined;
+	onCloseCapture?: GenericEventHandler<Target> | undefined;
 	onCancel?: GenericEventHandler<Target> | undefined;
+	onCancelCapture?: GenericEventHandler<Target> | undefined;
 
 	// Focus Events
 	onFocus?: FocusEventHandler<Target> | undefined;
@@ -763,6 +817,10 @@ export interface DOMAttributes<
 	// Selection Events
 	onSelect?: GenericEventHandler<Target> | undefined;
 	onSelectCapture?: GenericEventHandler<Target> | undefined;
+	onSelectStart?: GenericEventHandler<Target> | undefined;
+	onSelectStartCapture?: GenericEventHandler<Target> | undefined;
+	onSelectionChange?: GenericEventHandler<Target> | undefined;
+	onSelectionChangeCapture?: GenericEventHandler<Target> | undefined;
 
 	// Touch Events
 	onTouchCancel?: TouchEventHandler<Target> | undefined;
@@ -795,6 +853,8 @@ export interface DOMAttributes<
 	onGotPointerCaptureCapture?: PointerEventHandler<Target> | undefined;
 	onLostPointerCapture?: PointerEventHandler<Target> | undefined;
 	onLostPointerCaptureCapture?: PointerEventHandler<Target> | undefined;
+	onPointerRawUpdate?: PointerEventHandler<Target> | undefined;
+	onPointerRawUpdateCapture?: PointerEventHandler<Target> | undefined;
 
 	// Scroll Events
 	onScroll?: GenericEventHandler<Target> | undefined;
@@ -811,6 +871,8 @@ export interface DOMAttributes<
 	onWheelCapture?: WheelEventHandler<Target> | undefined;
 
 	// Animation Events
+	onAnimationCancel?: AnimationEventHandler<Target> | undefined;
+	onAnimationCancelCapture?: AnimationEventHandler<Target> | undefined;
 	onAnimationStart?: AnimationEventHandler<Target> | undefined;
 	onAnimationStartCapture?: AnimationEventHandler<Target> | undefined;
 	onAnimationEnd?: AnimationEventHandler<Target> | undefined;
@@ -837,6 +899,7 @@ export interface DOMAttributes<
 	onResizeCapture?: PictureInPictureEventHandler<Target>;
 
 	onCommand?: CommandEventHandler<Target>;
+	onCommandCapture?: CommandEventHandler<Target>;
 }
 
 // All the WAI-ARIA 1.1 attributes from https://www.w3.org/TR/wai-aria-1.1/
@@ -1636,11 +1699,10 @@ export type AnchorAriaRoles =
 			role?: Signalish<AriaRole | undefined>;
 	  };
 
-export type AccessibleAnchorHTMLAttributes<
-	T extends EventTarget = HTMLAnchorElement
-> = Omit<PartialAnchorHTMLAttributes<T>, 'role'> & AnchorAriaRoles;
+export type AnchorHTMLAttributes<T extends EventTarget = HTMLAnchorElement> =
+	Omit<PartialAnchorHTMLAttributes<T>, 'role'> & AnchorAriaRoles;
 
-export interface AnchorHTMLAttributes<
+export interface LooseAnchorHTMLAttributes<
 	T extends EventTarget = HTMLAnchorElement
 > extends PartialAnchorHTMLAttributes<T> {
 	href?: Signalish<string | undefined>;
@@ -1673,11 +1735,13 @@ export type AreaAriaRoles =
 			role?: Signalish<'button' | 'link' | undefined>;
 	  };
 
-export type AccessibleAreaHTMLAttributes<
-	T extends EventTarget = HTMLAreaElement
-> = Omit<PartialAreaHTMLAttributes<T>, 'role'> & AreaAriaRoles;
+export type AreaHTMLAttributes<T extends EventTarget = HTMLAreaElement> = Omit<
+	PartialAreaHTMLAttributes<T>,
+	'role'
+> &
+	AreaAriaRoles;
 
-export interface AreaHTMLAttributes<
+export interface LooseAreaHTMLAttributes<
 	T extends EventTarget = HTMLAreaElement
 > extends PartialAreaHTMLAttributes<T> {
 	href?: Signalish<string | undefined>;
@@ -1795,6 +1859,10 @@ export interface ButtonHTMLAttributes<
 export interface CanvasHTMLAttributes<
 	T extends EventTarget = HTMLCanvasElement
 > extends HTMLAttributes<T> {
+	onContextLost?: GenericEventHandler<T> | undefined;
+	onContextLostCapture?: GenericEventHandler<T> | undefined;
+	onContextRestored?: GenericEventHandler<T> | undefined;
+	onContextRestoredCapture?: GenericEventHandler<T> | undefined;
 	height?: Signalish<number | string | undefined>;
 	width?: Signalish<number | string | undefined>;
 }
@@ -1858,7 +1926,9 @@ export interface DialogHTMLAttributes<
 	T extends EventTarget = HTMLDialogElement
 > extends HTMLAttributes<T> {
 	onCancel?: GenericEventHandler<T> | undefined;
+	onCancelCapture?: GenericEventHandler<T> | undefined;
 	onClose?: GenericEventHandler<T> | undefined;
+	onCloseCapture?: GenericEventHandler<T> | undefined;
 	open?: Signalish<boolean | undefined>;
 	closedby?: Signalish<'none' | 'closerequest' | 'any' | undefined>;
 	closedBy?: Signalish<'none' | 'closerequest' | 'any' | undefined>;
@@ -2010,7 +2080,7 @@ export interface IframeHTMLAttributes<
 	width?: Signalish<number | string | undefined>;
 }
 
-export type HTMLAttributeCrossOrigin = 'anonymous' | 'use-credentials';
+export type HTMLAttributeCrossOrigin = '' | 'anonymous' | 'use-credentials';
 
 export interface PartialImgHTMLAttributes<
 	T extends EventTarget
@@ -2080,15 +2150,13 @@ export type ImgAriaRoles =
 			role?: Signalish<'img' | 'none' | 'presentation' | undefined>;
 	  };
 
-export type AccessibleImgHTMLAttributes<
-	T extends EventTarget = HTMLImageElement
-> = Omit<
+export type ImgHTMLAttributes<T extends EventTarget = HTMLImageElement> = Omit<
 	PartialImgHTMLAttributes<T>,
 	'role' | 'aria-label' | 'aria-labelledby' | 'title'
 > &
 	ImgAriaRoles;
 
-export interface ImgHTMLAttributes<
+export interface LooseImgHTMLAttributes<
 	T extends EventTarget = HTMLImageElement
 > extends PartialImgHTMLAttributes<T> {
 	alt?: Signalish<string | undefined>;
@@ -2129,11 +2197,14 @@ export interface PartialInputHTMLAttributes<
 	T extends EventTarget
 > extends HTMLAttributes<T> {
 	accept?: Signalish<string | undefined>;
+	alpha?: Signalish<boolean | undefined>;
 	alt?: Signalish<string | undefined>;
 	autocomplete?: Signalish<string | undefined>;
 	autoComplete?: Signalish<string | undefined>;
 	capture?: Signalish<'user' | 'environment' | undefined>; // https://www.w3.org/TR/html-media-capture/#the-capture-attribute
 	checked?: Signalish<boolean | undefined>;
+	colorspace?: Signalish<'limited-srgb' | 'display-p3' | undefined>;
+	colorSpace?: Signalish<'limited-srgb' | 'display-p3' | undefined>;
 	defaultChecked?: Signalish<boolean | undefined>;
 	defaultValue?: Signalish<string | number | undefined>;
 	disabled?: Signalish<boolean | undefined>;
@@ -2182,9 +2253,13 @@ export interface PartialInputHTMLAttributes<
 	onChange?: GenericEventHandler<T> | undefined;
 }
 
-export type InputAriaRoles =
+type WithSignalType<U> = U extends { type?: infer V }
+	? U | (Omit<U, 'type'> & { type: SignalLike<Exclude<V, undefined>> })
+	: never;
+
+export type InputAriaRoles = WithSignalType<
 	| {
-			type: Signalish<'button'>;
+			type: 'button';
 			role?: Signalish<
 				| 'button'
 				| 'checkbox'
@@ -2205,7 +2280,7 @@ export type InputAriaRoles =
 			>;
 	  }
 	| {
-			type: Signalish<'checkbox'>;
+			type: 'checkbox';
 			role?: Signalish<
 				| 'checkbox'
 				| 'button'
@@ -2216,12 +2291,12 @@ export type InputAriaRoles =
 			>;
 	  }
 	| {
-			type: Signalish<'email'>;
+			type: 'email';
 			list?: never;
 			role?: Signalish<'textbox' | undefined>;
 	  }
 	| {
-			type: Signalish<'image'>;
+			type: 'image';
 			role?: Signalish<
 				| 'button'
 				| 'checkbox'
@@ -2240,19 +2315,21 @@ export type InputAriaRoles =
 			>;
 	  }
 	| {
-			type: Signalish<'number'>;
+			type: 'number';
+			list?: Signalish<string | undefined>;
 			role?: Signalish<'spinbutton' | undefined>;
 	  }
 	| {
-			type: Signalish<'radio'>;
+			type: 'radio';
 			role?: Signalish<'radio' | 'menuitemradio' | undefined>;
 	  }
 	| {
-			type: Signalish<'range'>;
+			type: 'range';
+			list?: Signalish<string | undefined>;
 			role?: Signalish<'slider' | undefined>;
 	  }
 	| {
-			type: Signalish<'reset'>;
+			type: 'reset';
 			role?: Signalish<
 				| 'button'
 				| 'checkbox'
@@ -2273,12 +2350,12 @@ export type InputAriaRoles =
 			>;
 	  }
 	| {
-			type: Signalish<'search'>;
+			type: 'search';
 			list?: never;
 			role?: Signalish<'searchbox' | undefined>;
 	  }
 	| {
-			type: Signalish<'submit'>;
+			type: 'submit';
 			role?: Signalish<
 				| 'button'
 				| 'checkbox'
@@ -2299,47 +2376,42 @@ export type InputAriaRoles =
 			>;
 	  }
 	| {
-			type: Signalish<'tel'>;
+			type: 'tel';
 			list?: never;
 			role?: Signalish<'textbox' | undefined>;
 	  }
 	| {
-			type?: Signalish<'text'>;
+			type?: 'text';
 			list?: never;
 			role?: Signalish<
 				'textbox' | 'combobox' | 'searchbox' | 'spinbutton' | undefined
 			>;
 	  }
 	| {
-			type?: Signalish<'text' | 'search' | 'tel' | 'url' | 'email'>;
+			type?: 'text' | 'search' | 'tel' | 'url' | 'email';
 			list: Signalish<string | undefined>;
 			role?: Signalish<'combobox' | undefined>;
 	  }
 	| {
-			type: Signalish<'url'>;
+			type: 'url';
 			list?: never;
 			role?: Signalish<'textbox' | undefined>;
 	  }
 	| {
-			type: Signalish<
-				| 'color'
-				| 'date'
-				| 'datetime-local'
-				| 'file'
-				| 'hidden'
-				| 'month'
-				| 'password'
-				| 'time'
-				| 'week'
-			>;
+			type: 'color' | 'date' | 'datetime-local' | 'month' | 'time' | 'week';
+			list?: Signalish<string | undefined>;
 			role?: never;
-	  };
+	  }
+	| {
+			type: 'file' | 'hidden' | 'password';
+			role?: never;
+	  }
+>;
 
-export type AccessibleInputHTMLAttributes<
-	T extends EventTarget = HTMLInputElement
-> = Omit<PartialInputHTMLAttributes<T>, 'role'> & InputAriaRoles;
+export type InputHTMLAttributes<T extends EventTarget = HTMLInputElement> =
+	Omit<PartialInputHTMLAttributes<T>, 'role' | 'type'> & InputAriaRoles;
 
-export interface InputHTMLAttributes<
+export interface LooseInputHTMLAttributes<
 	T extends EventTarget = HTMLInputElement
 > extends PartialInputHTMLAttributes<T> {
 	type?: Signalish<HTMLInputTypeAttribute | undefined>;
@@ -2698,7 +2770,12 @@ export type SelectAriaRoles =
 			multiple?: never;
 			// Spec states this branch is limited to "no `multiple` attribute AND no `size` attribute greater than 1".
 			// `1` as a default, however, caused some web compat issues and forced Firefox to default to `0` instead.
-			size?: 0 | 1 | never;
+			size?: 0 | 1;
+			role?: Signalish<'combobox' | 'menu' | undefined>;
+	  }
+	| {
+			multiple?: never;
+			size?: SignalLike<0 | 1>;
 			role?: Signalish<'combobox' | 'menu' | undefined>;
 	  }
 	| {
@@ -2707,11 +2784,10 @@ export type SelectAriaRoles =
 			role?: Signalish<'listbox' | undefined>;
 	  };
 
-export type AccessibleSelectHTMLAttributes<
-	T extends EventTarget = HTMLSelectElement
-> = Omit<PartialSelectHTMLAttributes<T>, 'role'> & SelectAriaRoles;
+export type SelectHTMLAttributes<T extends EventTarget = HTMLSelectElement> =
+	Omit<PartialSelectHTMLAttributes<T>, 'role' | 'size'> & SelectAriaRoles;
 
-export interface SelectHTMLAttributes<
+export interface LooseSelectHTMLAttributes<
 	T extends EventTarget = HTMLSelectElement
 > extends PartialSelectHTMLAttributes<T> {
 	multiple?: Signalish<boolean | undefined>;
@@ -2722,6 +2798,8 @@ export interface SelectHTMLAttributes<
 export interface SlotHTMLAttributes<
 	T extends EventTarget = HTMLSlotElement
 > extends HTMLAttributes<T> {
+	onSlotChange?: GenericEventHandler<T> | undefined;
+	onSlotChangeCapture?: GenericEventHandler<T> | undefined;
 	name?: Signalish<string | undefined>;
 	role?: never;
 }
@@ -2782,6 +2860,14 @@ export interface TemplateHTMLAttributes<
 	T extends EventTarget = HTMLTemplateElement
 > extends HTMLAttributes<T> {
 	role?: never;
+	shadowrootclonable?: Signalish<boolean | undefined>;
+	shadowRootClonable?: Signalish<boolean | undefined>;
+	shadowrootdelegatesfocus?: Signalish<boolean | undefined>;
+	shadowRootDelegatesFocus?: Signalish<boolean | undefined>;
+	shadowrootmode?: Signalish<'open' | 'closed' | undefined>;
+	shadowRootMode?: Signalish<'open' | 'closed' | undefined>;
+	shadowrootserializable?: Signalish<boolean | undefined>;
+	shadowRootSerializable?: Signalish<boolean | undefined>;
 }
 
 export interface TextareaHTMLAttributes<
@@ -2842,6 +2928,8 @@ export interface TitleHTMLAttributes<
 export interface TrackHTMLAttributes<
 	T extends EventTarget = HTMLTrackElement
 > extends MediaHTMLAttributes<T> {
+	onCueChange?: GenericEventHandler<T> | undefined;
+	onCueChangeCapture?: GenericEventHandler<T> | undefined;
 	default?: Signalish<boolean | undefined>;
 	kind?: Signalish<string | undefined>;
 	label?: Signalish<string | undefined>;

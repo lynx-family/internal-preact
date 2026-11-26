@@ -21,24 +21,20 @@ jobs:
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: 22
-      - name: Get package version
+          package-manager-cache: false
+      - name: Get major.minor version
         id: package-version
         run: |
-          VERSION=$(node -p "require('./package.json').version")
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-      - name: Get commit hash
-        id: commit-hash
-        run: |
-          SHORT_SHA=$(git rev-parse --short=7 HEAD)
-          echo "sha=$SHORT_SHA" >> $GITHUB_OUTPUT
+          MAJOR_MINOR=$(node -p "const [major, minor] = require('./package.json').version.split('.'); major + '.' + minor")
+          echo "major_minor=$MAJOR_MINOR" >> $GITHUB_OUTPUT
       - name: Build package version
         id: build-version
         run: |
-          # Fixed-width UTC timestamp keeps semver prerelease ordering monotonic across
-          # commits, so tooling like Renovate will always see later releases as newer
-          # (git short-shas alone sort lexicographically and are not monotonic).
+          # Replace patch with a fixed-width UTC timestamp (<major>.<minor>.<YYYYMMDDHHMMSS>)
+          # so published versions stay non-prerelease (satisfying peer ranges such as
+          # `@preact/signals`'s `>= 10.25.0 || >=11.0.0-0`) while remaining strictly monotonic.
           TIMESTAMP=$(date -u +%Y%m%d%H%M%S)
-          FULL_VERSION="${{ steps.package-version.outputs.version }}-${TIMESTAMP}-${{ steps.commit-hash.outputs.sha }}"
+          FULL_VERSION="${{ steps.package-version.outputs.major_minor }}.${TIMESTAMP}"
           echo "full_version=$FULL_VERSION" >> $GITHUB_OUTPUT
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:

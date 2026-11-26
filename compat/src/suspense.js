@@ -1,26 +1,28 @@
 import { Component, Fragment, createElement, options } from 'preact';
 import {
 	COMPONENT_FORCE,
-	FORCE_PROPS_REVALIDATE,
 	MODE_HYDRATE,
-	UNDEFINED
+	REF_DETACHED,
+	UNDEFINED,
+	VNODE_MARKER
 } from '../../src/constants';
+import { useId } from 'preact/hooks';
 import { assign } from './util';
 
 function initSuspenseHooks() {
 	const oldCatchError = options._catchError;
 	options._catchError = (error, newVNode, oldVNode, errorInfo) => {
-		if (error.then) {
+		if (error && error.then) {
 			/** @type {import('./internal').Component} */
 			let component;
 			let vnode = newVNode;
 
 			while ((vnode = vnode._parent)) {
 				if ((component = vnode._component) && component._childDidSuspend) {
-					if (newVNode._dom == null) {
-						newVNode._dom = oldVNode._dom;
-						newVNode._children = oldVNode._children || [];
-					}
+					// A component that suspends before ever committing has no state
+					// worth keeping; mounted ones keep their hooks while parked.
+					if (oldVNode && !oldVNode._component)
+						newVNode._component.__hooks = UNDEFINED;
 					// Don't call oldCatchError if we found a Suspense
 					return component._childDidSuspend(error, newVNode);
 				}
@@ -33,7 +35,6 @@ function initSuspenseHooks() {
 	options.unmount = vnode => {
 		/** @type {import('./internal').Component} */
 		const component = vnode._component;
-		if (component) component._unmounted = true;
 		if (component && component._onResolve) {
 			component._onResolve();
 		}
@@ -44,15 +45,27 @@ function initSuspenseHooks() {
 
 function detachedClone(vnode, detachedParent, parentDom) {
 	if (vnode) {
-		if (vnode._component && vnode._component.__hooks) {
-			vnode._component.__hooks._list.forEach(effect => {
-				if (typeof effect._cleanup == 'function') effect._cleanup();
+		const hooks = vnode._component && vnode._component.__hooks;
+		if (hooks) {
+			hooks._list.forEach(effect => {
+				// Only effects carry `_passive`; clearing `_args` makes them run
+				// again when the tree is revealed, memo/ref state stays intact.
+				if (effect._passive != null) {
+					if (typeof effect._cleanup == 'function') effect._cleanup();
+					effect._cleanup = effect._args = UNDEFINED;
+				}
 			});
-
-			vnode._component.__hooks = null;
+			// Drop effects queued by the aborted render; `options._render` swaps in
+			// a fresh `_pendingEffects` array before anything is pushed again, so
+			// sharing one empty array here is safe.
+			hooks._pendingEffects = vnode._component._renderCallbacks = [];
 		}
 
-		vnode = assign({ constructor: UNDEFINED }, vnode);
+		// Unmounting the clone detaches DOM refs; flag the original so the
+		// reveal attaches them again.
+		if (typeof vnode.type == 'string') vnode._flags |= REF_DETACHED;
+
+		vnode = assign({ constructor: VNODE_MARKER }, vnode);
 		if (vnode._component != null) {
 			if (vnode._component._parentDom == parentDom) {
 				vnode._component._parentDom = detachedParent;
@@ -60,7 +73,8 @@ function detachedClone(vnode, detachedParent, parentDom) {
 
 			vnode._component._bits |= COMPONENT_FORCE;
 
-			vnode._component = null;
+			// Keep component refs attached while parked, as object refs already are
+			vnode._component = vnode.ref = null;
 		}
 
 		vnode._children =
@@ -75,10 +89,6 @@ function detachedClone(vnode, detachedParent, parentDom) {
 
 function removeOriginal(vnode, detachedParent, originalParent) {
 	if (vnode && originalParent) {
-		if (typeof vnode.type == 'string') {
-			vnode._flags |= FORCE_PROPS_REVALIDATE;
-		}
-
 		vnode._original = null;
 		vnode._children =
 			vnode._children &&
@@ -131,7 +141,8 @@ function createSuspense() {
 
 		let resolved = false;
 		const onResolved = () => {
-			if (resolved || this._unmounted) return;
+			// Core nulls `_parentDom` when the boundary unmounts.
+			if (resolved || !this._parentDom) return;
 
 			resolved = true;
 			suspendingComponent._onResolve = null;
@@ -143,7 +154,7 @@ function createSuspense() {
 
 		// Store and null _parentDom to prevent setState/forceUpdate from
 		// scheduling renders while suspended. Render would be a no-op anyway
-		// since renderComponent checks _parentDom, but this avoids queue churn.
+		// since process() checks _parentDom, but this avoids queue churn.
 		const originalParentDom = suspendingComponent._parentDom;
 		suspendingComponent._parentDom = null;
 
@@ -164,9 +175,13 @@ function createSuspense() {
 
 				let suspended;
 				while ((suspended = this._suspenders.pop())) {
-					// Restore _parentDom before forceUpdate so render can proceed
-					suspended._parentDom = originalParentDom;
-					suspended.forceUpdate();
+					// Skip suspenders unmounted meanwhile: unmount() nulls
+					// _globalContext, and a dead vnode can't be re-rendered.
+					if (suspended._globalContext) {
+						// Restore _parentDom before forceUpdate so render can proceed
+						suspended._parentDom = originalParentDom;
+						suspended.forceUpdate();
+					}
 				}
 			}
 		};
@@ -174,7 +189,7 @@ function createSuspense() {
 		/**
 		 * We do not set `suspended: true` during hydration because we want the actual markup
 		 * to remain on screen and hydrate it when the suspense actually gets resolved.
-		 * While in non-hydration cases the usual fallback -> component flow would occour.
+		 * While in non-hydration cases the usual fallback -> component flow would occur.
 		 */
 		if (
 			!this._pendingSuspensionCount++ &&
@@ -189,6 +204,7 @@ function createSuspense() {
 
 	Suspense.prototype.componentWillUnmount = function () {
 		this._suspenders = [];
+		if (this.state._suspended) this._vnode._children[0] = this.state._suspended;
 	};
 
 	/**
@@ -197,6 +213,10 @@ function createSuspense() {
 	 * @param {import('./internal').SuspenseState} state
 	 */
 	Suspense.prototype.render = function (props, state) {
+		// Ids inside a boundary come from its own counter, so they don't depend
+		// on when it resolves on the server or hydrates on the client.
+		this._mask || (this._mask = [useId(), 0]);
+
 		if (this._detachOnNextRender) {
 			// When the Suspense's _vnode was created by a call to createVNode
 			// (i.e. due to a setState further up in the tree)

@@ -19,7 +19,8 @@
     },
     "compress": {
       "hoist_vars": true,
-      "reduce_funcs": false
+      "reduce_funcs": false,
+      "inline": 2
     }
   },
   "props": {
@@ -27,11 +28,13 @@
     "props": {
       "$_hasScuFromHooks": "__f",
       "$_listeners": "__e",
+      "$_attached": "__a",
       "$_cleanup": "__c",
       "$__hooks": "__H",
       "$_hydrationMismatch": "__m",
       "$_list": "__",
       "$_pendingEffects": "__h",
+      "$_passive": "__P",
       "$_value": "__",
       "$_nextValue": "__N",
       "$_original": "__v",
@@ -47,7 +50,6 @@
       "$_children": "__k",
       "$_pendingSuspensionCount": "__u",
       "$_childDidSuspend": "__c",
-      "$_unmounted": "__z",
       "$_onResolve": "__R",
       "$_suspended": "__a",
       "$_dom": "__e",
@@ -62,7 +64,6 @@
       "$_id": "__c",
       "$_parentDom": "__P",
       "$_originalParentDom": "__O",
-      "$_prevState": "__u",
       "$_root": "__",
       "$_diff": "__b",
       "$_commit": "__c",
@@ -70,10 +71,8 @@
       "$_render": "__r",
       "$_hook": "__h",
       "$_catchError": "__e",
-      "$_unmount": "__u",
-      "$_owner": "__o",
+      "$_refCleanup": "__x",
       "$_skipEffects": "__s",
-      "$_isSuspended": "__i",
       "$_bits": "__g"
     }
   }

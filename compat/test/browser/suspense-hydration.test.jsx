@@ -2,11 +2,15 @@ import { setupRerender } from 'preact/test-utils';
 import React, {
 	createElement,
 	hydrate,
+	render,
 	Fragment,
 	Suspense,
+	use,
 	memo,
+	useId,
 	useState,
-	useSyncExternalStore
+	useSyncExternalStore,
+	createPortal
 } from 'preact/compat';
 import { logCall, getLog, clearLog } from '../../../test/_util/logCall';
 import {
@@ -97,6 +101,381 @@ describe('suspense hydration', () => {
 			expect(getLog()).to.deep.equal([]);
 			clearLog();
 		});
+	});
+
+	it.skip('should not claim a marked sibling when an unmarked boundary suspends', async () => {
+		const originalHtml =
+			'<div><button id="first">first</button><!--$s--><button id="second">second</button><!--/$s--></div>';
+		scratch.innerHTML = originalHtml;
+		const first = scratch.querySelector('#first');
+		const second = scratch.querySelector('#second');
+		const listeners = [vi.fn(), vi.fn()];
+		const [LazyFirst, resolveFirst] = createLazy();
+		const [LazySecond, resolveSecond] = createLazy();
+
+		hydrate(
+			<div>
+				<Suspense>
+					<LazyFirst />
+				</Suspense>
+				<Suspense>
+					<LazySecond />
+				</Suspense>
+			</div>,
+			scratch
+		);
+		rerender();
+		expect(scratch.innerHTML).to.equal(originalHtml);
+
+		await resolveFirst(() => (
+			<button id="first" onClick={listeners[0]}>
+				first
+			</button>
+		));
+		rerender();
+		await resolveSecond(() => (
+			<button id="second" onClick={listeners[1]}>
+				second
+			</button>
+		));
+		rerender();
+
+		expect(scratch.innerHTML).to.equal(originalHtml);
+		expect(scratch.querySelector('#first')).to.equal(first);
+		expect(scratch.querySelector('#second')).to.equal(second);
+		first.dispatchEvent(createEvent('click'));
+		expect(listeners[0]).toHaveBeenCalledOnce();
+		expect(listeners[1]).not.toHaveBeenCalled();
+		second.dispatchEvent(createEvent('click'));
+		expect(listeners[1]).toHaveBeenCalledOnce();
+		expect(listeners[0]).toHaveBeenCalledOnce();
+	});
+
+	it.skip('should preserve a hydrated sibling when an unmarked boundary suspends', async () => {
+		scratch.innerHTML =
+			'<div><button id="first">first</button><!--$s--><button id="second">second</button><!--/$s--></div>';
+		const first = scratch.querySelector('#first');
+		const second = scratch.querySelector('#second');
+		const listeners = [vi.fn(), vi.fn()];
+		const [Lazy, resolve] = createLazy();
+
+		hydrate(
+			<div>
+				<Suspense>
+					<Lazy />
+				</Suspense>
+				<Suspense>
+					<button id="second" onClick={listeners[1]}>
+						second
+					</button>
+				</Suspense>
+			</div>,
+			scratch
+		);
+		rerender();
+		expect(scratch.querySelector('#first')).to.equal(first);
+		expect(scratch.querySelector('#second')).to.equal(second);
+		second.dispatchEvent(createEvent('click'));
+		expect(listeners[1]).toHaveBeenCalledOnce();
+		expect(listeners[0]).not.toHaveBeenCalled();
+
+		await resolve(() => (
+			<button id="first" onClick={listeners[0]}>
+				first
+			</button>
+		));
+		rerender();
+
+		expect(scratch.querySelectorAll('button').length).to.equal(2);
+		expect(scratch.querySelector('#first')).to.equal(first);
+		expect(scratch.querySelector('#second')).to.equal(second);
+		expect(first.outerHTML).to.equal('<button id="first">first</button>');
+		expect(second.outerHTML).to.equal('<button id="second">second</button>');
+		first.dispatchEvent(createEvent('click'));
+		expect(listeners[0]).toHaveBeenCalledOnce();
+		expect(listeners[1]).toHaveBeenCalledOnce();
+	});
+
+	it.skip('should not claim the markers of an already-hydrated sibling', async () => {
+		scratch.innerHTML =
+			'<div><!--$s:0--><button id="first">first</button><!--/$s:0--><!--$s:1--><button id="second">second</button><!--/$s:1--></div>';
+		const first = scratch.querySelector('#first');
+		const second = scratch.querySelector('#second');
+		const listeners = [vi.fn(), vi.fn()];
+		const [Lazy, resolve] = createLazy();
+		clearLog();
+
+		hydrate(
+			<div>
+				<Suspense>
+					<button id="first" onClick={listeners[0]}>
+						first
+					</button>
+				</Suspense>
+				<Suspense>
+					<Lazy />
+				</Suspense>
+			</div>,
+			scratch
+		);
+		rerender();
+		expect(scratch.querySelector('#first')).to.equal(first);
+		expect(scratch.querySelector('#second')).to.equal(second);
+		first.dispatchEvent(createEvent('click'));
+		expect(listeners[0]).toHaveBeenCalledOnce();
+		expect(listeners[1]).not.toHaveBeenCalled();
+
+		await resolve(() => (
+			<button id="second" onClick={listeners[1]}>
+				second
+			</button>
+		));
+		rerender();
+
+		expect(getLog()).to.deep.equal([]);
+		expect(scratch.querySelectorAll('button').length).to.equal(2);
+		expect(first.outerHTML).to.equal('<button id="first">first</button>');
+		expect(second.outerHTML).to.equal('<button id="second">second</button>');
+		expect(scratch.querySelector('#first')).to.equal(first);
+		expect(scratch.querySelector('#second')).to.equal(second);
+		second.dispatchEvent(createEvent('click'));
+		expect(listeners[1]).toHaveBeenCalledOnce();
+		expect(listeners[0]).toHaveBeenCalledOnce();
+	});
+
+	it.skip('should hydrate marked siblings that resolve in reverse order', async () => {
+		const originalHtml =
+			'<div><!--$s--><button id="first">first</button><!--/$s--><!--$s--><button id="second">second</button><!--/$s--></div>';
+		scratch.innerHTML = originalHtml;
+		const first = scratch.querySelector('#first');
+		const second = scratch.querySelector('#second');
+		const listeners = [vi.fn(), vi.fn()];
+		const [LazyFirst, resolveFirst] = createLazy();
+		const [LazySecond, resolveSecond] = createLazy();
+
+		hydrate(
+			<div>
+				<Suspense>
+					<LazyFirst />
+				</Suspense>
+				<Suspense>
+					<LazySecond />
+				</Suspense>
+			</div>,
+			scratch
+		);
+		rerender();
+		expect(scratch.innerHTML).to.equal(originalHtml);
+
+		await resolveSecond(() => (
+			<button id="second" onClick={listeners[1]}>
+				second
+			</button>
+		));
+		rerender();
+		await resolveFirst(() => (
+			<button id="first" onClick={listeners[0]}>
+				first
+			</button>
+		));
+		rerender();
+
+		expect(scratch.innerHTML).to.equal(originalHtml);
+		expect(scratch.querySelector('#first')).to.equal(first);
+		expect(scratch.querySelector('#second')).to.equal(second);
+		first.dispatchEvent(createEvent('click'));
+		expect(listeners[0]).toHaveBeenCalledOnce();
+		expect(listeners[1]).not.toHaveBeenCalled();
+		second.dispatchEvent(createEvent('click'));
+		expect(listeners[1]).toHaveBeenCalledOnce();
+		expect(listeners[0]).toHaveBeenCalledOnce();
+	});
+
+	it.skip('should preserve suspended siblings around a hydrated marked boundary', async () => {
+		scratch.innerHTML =
+			'<ul><!--$s:0--><li>first</li><!--/$s:0--><!--$s:1--><li>second</li><!--/$s:1--><!--$s:2--><li>third</li><!--/$s:2--></ul>';
+		const [first, second, third] = scratch.querySelectorAll('li');
+		const listeners = [vi.fn(), vi.fn(), vi.fn()];
+		const [LazyFirst, resolveFirst] = createLazy();
+		const [LazyThird, resolveThird] = createLazy();
+		clearLog();
+
+		hydrate(
+			<List>
+				<Suspense>
+					<LazyFirst />
+				</Suspense>
+				<Suspense>
+					<ListItem onClick={listeners[1]}>second</ListItem>
+				</Suspense>
+				<Suspense>
+					<LazyThird />
+				</Suspense>
+			</List>,
+			scratch
+		);
+		rerender();
+		expect(scratch.querySelectorAll('li')[0]).to.equal(first);
+		expect(scratch.querySelectorAll('li')[1]).to.equal(second);
+		expect(scratch.querySelectorAll('li')[2]).to.equal(third);
+
+		await resolveThird(() => <ListItem onClick={listeners[2]}>third</ListItem>);
+		rerender();
+		await resolveFirst(() => <ListItem onClick={listeners[0]}>first</ListItem>);
+		rerender();
+
+		expect(getLog()).to.deep.equal([]);
+		expect(scratch.querySelectorAll('li').length).to.equal(3);
+		expect(scratch.querySelectorAll('li')[0]).to.equal(first);
+		expect(scratch.querySelectorAll('li')[1]).to.equal(second);
+		expect(scratch.querySelectorAll('li')[2]).to.equal(third);
+		expect(scratch.textContent).to.equal('firstsecondthird');
+		first.dispatchEvent(createEvent('click'));
+		expect(listeners[0]).toHaveBeenCalledOnce();
+		expect(listeners[1]).not.toHaveBeenCalled();
+		expect(listeners[2]).not.toHaveBeenCalled();
+		second.dispatchEvent(createEvent('click'));
+		third.dispatchEvent(createEvent('click'));
+		expect(listeners[0]).toHaveBeenCalledOnce();
+		expect(listeners[1]).toHaveBeenCalledOnce();
+		expect(listeners[2]).toHaveBeenCalledOnce();
+	});
+
+	it.skip('should hydrate an empty marked boundary between siblings', async () => {
+		const originalHtml =
+			'<div><button id="before">before</button><!--$s--><!--/$s--><button id="after">after</button></div>';
+		scratch.innerHTML = originalHtml;
+		const before = scratch.querySelector('#before');
+		const after = scratch.querySelector('#after');
+		const listeners = [vi.fn(), vi.fn()];
+		const [Lazy, resolve] = createLazy();
+		clearLog();
+
+		hydrate(
+			<div>
+				<button id="before" onClick={listeners[0]}>
+					before
+				</button>
+				<Suspense>
+					<Lazy />
+				</Suspense>
+				<button id="after" onClick={listeners[1]}>
+					after
+				</button>
+			</div>,
+			scratch
+		);
+		rerender();
+		expect(scratch.innerHTML).to.equal(originalHtml);
+		expect(getLog()).to.deep.equal([]);
+		before.dispatchEvent(createEvent('click'));
+		after.dispatchEvent(createEvent('click'));
+		expect(listeners[0]).toHaveBeenCalledOnce();
+		expect(listeners[1]).toHaveBeenCalledOnce();
+
+		await resolve(() => null);
+		rerender();
+
+		expect(scratch.innerHTML).to.equal(originalHtml);
+		expect(scratch.querySelector('#before')).to.equal(before);
+		expect(scratch.querySelector('#after')).to.equal(after);
+		expect(getLog()).to.deep.equal([]);
+	});
+
+	it.skip('should continue hydrating and updating siblings while boundaries are suspended', async () => {
+		scratch.innerHTML =
+			'<div><button id="first">first</button><!--$s--><button id="second">second</button><!--/$s--><button id="counter">0</button></div>';
+		const first = scratch.querySelector('#first');
+		const second = scratch.querySelector('#second');
+		const counter = scratch.querySelector('#counter');
+		const onRef = vi.fn();
+		const [LazyFirst, resolveFirst] = createLazy();
+		const [LazySecond, resolveSecond] = createLazy();
+
+		function Counter() {
+			const [count, setCount] = useState(0);
+			return (
+				<button id="counter" ref={onRef} onClick={() => setCount(count + 1)}>
+					{count}
+				</button>
+			);
+		}
+
+		hydrate(
+			<div>
+				<Suspense>
+					<LazyFirst />
+				</Suspense>
+				<Suspense>
+					<LazySecond />
+				</Suspense>
+				<Counter />
+			</div>,
+			scratch
+		);
+		rerender();
+
+		expect(onRef).toHaveBeenCalledWith(counter);
+		counter.dispatchEvent(createEvent('click'));
+		rerender();
+		expect(counter.textContent).to.equal('1');
+		expect(scratch.querySelector('#counter')).to.equal(counter);
+		expect(scratch.querySelector('#first')).to.equal(first);
+		expect(scratch.querySelector('#second')).to.equal(second);
+
+		await resolveSecond(() => <button id="second">second</button>);
+		rerender();
+		await resolveFirst(() => <button id="first">first</button>);
+		rerender();
+
+		counter.dispatchEvent(createEvent('click'));
+		rerender();
+		expect(counter.textContent).to.equal('2');
+		expect(scratch.querySelectorAll('button').length).to.equal(3);
+		expect(scratch.querySelector('#counter')).to.equal(counter);
+		expect(scratch.querySelector('#first')).to.equal(first);
+		expect(scratch.querySelector('#second')).to.equal(second);
+	});
+
+	it.skip('should hydrate nested empty ranges after a marked sibling', async () => {
+		scratch.innerHTML =
+			'<div><!--$s:0--><button id="before">before</button><!--/$s:0--><!--$s:1--><!--$s:2--><!--/$s:2--><!--/$s:1--></div>';
+		const before = scratch.querySelector('#before');
+		const onClick = vi.fn();
+		const [LazyOuter, resolveOuter] = createLazy();
+		const [LazyInner, resolveInner] = createLazy();
+		const expectedRange = '<!--$s:1--><!--$s:2--><!--/$s:2--><!--/$s:1-->';
+
+		hydrate(
+			<div>
+				<Suspense>
+					<button id="before" onClick={onClick}>
+						before
+					</button>
+				</Suspense>
+				<Suspense>
+					<LazyOuter>
+						<Suspense>
+							<LazyInner />
+						</Suspense>
+					</LazyOuter>
+				</Suspense>
+			</div>,
+			scratch
+		);
+		rerender();
+		expect(scratch.innerHTML).to.contain(expectedRange);
+
+		await resolveOuter(props => props.children);
+		rerender();
+		await resolveInner(() => null);
+		rerender();
+
+		expect(scratch.innerHTML).to.contain(expectedRange);
+		expect(scratch.querySelectorAll('button').length).to.equal(1);
+		expect(scratch.querySelector('#before')).to.equal(before);
+		before.dispatchEvent(createEvent('click'));
+		expect(onClick).toHaveBeenCalledOnce();
 	});
 
 	it('should use the server snapshot when suspended hydration resumes', async () => {
@@ -874,6 +1253,80 @@ describe('suspense hydration', () => {
 			});
 	});
 
+	it('should preserve component state when re-suspending after streaming-style hydration', async () => {
+		scratch.innerHTML =
+			'<!--$s:2--><div><p>Hello</p><button>Count: 0</button></div><!--/$s:2-->';
+
+		let promise = Promise.resolve('Hello');
+		let increment;
+		function App() {
+			const message = use(promise);
+			const [count, setCount] = useState(0);
+			increment = () => setCount(value => value + 1);
+			return (
+				<div>
+					<p>{message}</p>
+					<button>Count: {count}</button>
+				</div>
+			);
+		}
+
+		hydrate(
+			<Suspense fallback={<div>Fallback</div>}>
+				<App />
+			</Suspense>,
+			scratch
+		);
+		await promise;
+		rerender();
+		rerender();
+
+		increment();
+		rerender();
+		expect(scratch.querySelector('button').textContent).to.equal('Count: 1');
+
+		promise = Promise.resolve('Hello');
+		increment();
+		rerender();
+		await promise;
+		rerender();
+		rerender();
+
+		expect(scratch.querySelector('button').textContent).to.equal('Count: 2');
+	});
+
+	it('should preserve component state when re-suspending after client render', async () => {
+		let promise = Promise.resolve('Hello');
+		let increment;
+		function App() {
+			use(promise);
+			const [count, setCount] = useState(0);
+			increment = () => setCount(value => value + 1);
+			return <button>Count: {count}</button>;
+		}
+
+		render(
+			<Suspense fallback="Fallback">
+				<App />
+			</Suspense>,
+			scratch
+		);
+		await promise;
+		rerender();
+		rerender();
+		increment();
+		rerender();
+		expect(scratch.textContent).to.equal('Count: 1');
+
+		promise = Promise.resolve('Hello');
+		increment();
+		rerender();
+		await promise;
+		rerender();
+		rerender();
+		expect(scratch.textContent).to.equal('Count: 2');
+	});
+
 	it('should correctly hydrate and rerender a memoized lazy data loader', () => {
 		const originalHtml = '<p>Count: 5</p>';
 		scratch.innerHTML = originalHtml;
@@ -1269,6 +1722,61 @@ describe('suspense hydration', () => {
 		});
 	});
 
+	it('should keep its own markers when re-rendered by a parent while suspended during hydration', async () => {
+		const originalHtml =
+			'<!--$s:0--><p>outer</p><!--$s:1--><p>nested</p><!--/$s:1--><!--/$s:0--><div>0</div>';
+		scratch.innerHTML = originalHtml;
+		const outer = scratch.childNodes[1];
+		const nested = scratch.childNodes[3];
+		clearLog();
+
+		const [LazyOuter, resolveOuter] = createLazy();
+		const [LazyNested, resolveNested] = createLazy();
+
+		let update;
+		function App() {
+			const [count, setCount] = useState(0);
+			update = () => setCount(count + 1);
+			return (
+				<>
+					<Suspense>
+						<LazyOuter />
+					</Suspense>
+					<div>{count}</div>
+				</>
+			);
+		}
+
+		hydrate(<App />, scratch);
+		rerender();
+
+		update();
+		rerender();
+		expect(scratch.innerHTML).to.equal(
+			'<!--$s:0--><p>outer</p><!--$s:1--><p>nested</p><!--/$s:1--><!--/$s:0--><div>1</div>'
+		);
+		clearLog();
+
+		await resolveOuter(() => (
+			<>
+				<p>outer</p>
+				<Suspense>
+					<LazyNested />
+				</Suspense>
+			</>
+		));
+		rerender();
+		await resolveNested(() => <p>nested</p>);
+		rerender();
+
+		expect(scratch.innerHTML).to.equal(
+			'<!--$s:0--><p>outer</p><!--$s:1--><p>nested</p><!--/$s:1--><!--/$s:0--><div>1</div>'
+		);
+		expect(scratch.childNodes[1]).to.equal(outer);
+		expect(scratch.childNodes[3]).to.equal(nested);
+		expect(getLog()).to.deep.equal([]);
+	});
+
 	it.skip('should use updated DOM when stream patcher replaces content before suspend resolves', () => {
 		scratch.innerHTML =
 			'<!--$s:0--><span>Loading</span><!--/$s:0--><div>after</div>';
@@ -1373,5 +1881,571 @@ describe('suspense hydration', () => {
 			expect(scratch.innerHTML).to.equal(originalHtml);
 			clearLog();
 		});
+	});
+
+	it('should mount a portal fresh while a sibling suspends during hydration', async () => {
+		scratch.innerHTML = '<p>a</p><p>lazy</p>';
+		const portalRoot = document.createElement('div');
+		portalRoot.innerHTML = '<em>existing</em>';
+		document.body.appendChild(portalRoot);
+
+		const [Lazy, resolve] = createLazy();
+		function App() {
+			return (
+				<Suspense fallback={<div>fallback</div>}>
+					<p>a</p>
+					{createPortal(<p>b</p>, portalRoot)}
+					<Lazy />
+				</Suspense>
+			);
+		}
+
+		try {
+			hydrate(<App />, scratch);
+			rerender();
+			expect(scratch.innerHTML).to.equal('<p>a</p><p>lazy</p>');
+			expect(portalRoot.innerHTML).to.equal('<em>existing</em><p>b</p>');
+
+			await resolve(() => <p>lazy</p>);
+			rerender();
+			expect(scratch.innerHTML).to.equal('<p>a</p><p>lazy</p>');
+			expect(portalRoot.innerHTML).to.equal('<em>existing</em><p>b</p>');
+		} finally {
+			portalRoot.remove();
+		}
+	});
+
+	describe('unmounting a suspender while a sibling is pending', () => {
+		let setShow, setKey;
+		const Box = ({ children }) => {
+			const [show, set] = useState(true);
+			setShow = set;
+			return <div>{show ? children : null}</div>;
+		};
+		// Same DOM parent as its sibling: restoring suspenders that live in
+		// different DOM parents is a separate issue.
+		const Keyed = ({ Lazy }) => {
+			const [key, set] = useState(1);
+			setKey = set;
+			return <Lazy key={key} />;
+		};
+
+		it('should not re-render a resolved suspender unmounted before the boundary completes', async () => {
+			const [LazyA, resolveA] = createLazy();
+			const [LazyB, resolveB] = createLazy();
+			scratch.innerHTML = '<div><p>a</p></div><p>b</p>';
+			hydrate(
+				<Suspense fallback={null}>
+					<Box>
+						<LazyA />
+					</Box>
+					<LazyB />
+				</Suspense>,
+				scratch
+			);
+			rerender();
+			await resolveA(() => <p>a</p>);
+			rerender();
+			setShow(false);
+			rerender();
+			expect(scratch.innerHTML).to.equal('<div></div><p>b</p>');
+
+			await resolveB(() => <p>b</p>);
+			rerender();
+			expect(scratch.innerHTML).to.equal('<div></div><p>b</p>');
+		});
+
+		it('should not re-render a pending suspender unmounted before the boundary completes', async () => {
+			const [LazyA, resolveA] = createLazy();
+			const [LazyB, resolveB] = createLazy();
+			scratch.innerHTML = '<div><p>a</p></div><p>b</p>';
+			hydrate(
+				<Suspense fallback={null}>
+					<Box>
+						<LazyA />
+					</Box>
+					<LazyB />
+				</Suspense>,
+				scratch
+			);
+			rerender();
+			setShow(false);
+			rerender();
+			expect(scratch.innerHTML).to.equal('<div></div><p>b</p>');
+
+			await resolveB(() => <p>b</p>);
+			rerender();
+			expect(scratch.innerHTML).to.equal('<div></div><p>b</p>');
+
+			await resolveA(() => <p>a</p>);
+			rerender();
+			expect(scratch.innerHTML).to.equal('<div></div><p>b</p>');
+			setShow(true);
+			rerender();
+			expect(scratch.innerHTML).to.equal('<div><p>a</p></div><p>b</p>');
+		});
+
+		it('should complete the boundary when the last pending suspender unmounts', async () => {
+			const [LazyA, resolveA] = createLazy();
+			const [LazyB, resolveB] = createLazy();
+			scratch.innerHTML = '<div><p>a</p></div><p>b</p>';
+			hydrate(
+				<Suspense fallback={null}>
+					<Box>
+						<LazyA />
+					</Box>
+					<LazyB />
+				</Suspense>,
+				scratch
+			);
+			rerender();
+			await resolveB(() => <p>b</p>);
+			rerender();
+			setShow(false);
+			rerender();
+			expect(scratch.innerHTML).to.equal('<div></div><p>b</p>');
+
+			await resolveA(() => <p>a</p>);
+			rerender();
+			expect(scratch.innerHTML).to.equal('<div></div><p>b</p>');
+		});
+
+		it('should render a new instance mounted in place of an unmounted suspender', async () => {
+			const [LazyA, resolveA] = createLazy();
+			const [LazyB, resolveB] = createLazy();
+			scratch.innerHTML = '<p>a</p><p>b</p>';
+			hydrate(
+				<Suspense fallback={null}>
+					<Keyed Lazy={LazyA} />
+					<LazyB />
+				</Suspense>,
+				scratch
+			);
+			rerender();
+			setKey(2);
+			rerender();
+			expect(scratch.innerHTML).to.equal('<p>b</p>');
+
+			await resolveA(() => <p>a</p>);
+			rerender();
+			await resolveB(() => <p>b</p>);
+			rerender();
+			expect(scratch.innerHTML).to.equal('<p>a</p><p>b</p>');
+		});
+
+		it('should render a resolved new instance mounted in place of an unmounted suspender', async () => {
+			const [LazyA, resolveA] = createLazy();
+			const [LazyB, resolveB] = createLazy();
+			scratch.innerHTML = '<p>a</p><p>b</p>';
+			hydrate(
+				<Suspense fallback={null}>
+					<Keyed Lazy={LazyA} />
+					<LazyB />
+				</Suspense>,
+				scratch
+			);
+			rerender();
+			await resolveA(() => <p>a</p>);
+			rerender();
+			setKey(2);
+			rerender();
+			expect(scratch.innerHTML).to.equal('<p>a</p><p>b</p>');
+
+			await resolveB(() => <p>b</p>);
+			rerender();
+			expect(scratch.innerHTML).to.equal('<p>a</p><p>b</p>');
+		});
+	});
+
+	it('should give ids inside a boundary the same value whenever it resolves', async () => {
+		const Id = () => <input id={useId()} />;
+		const [Lazy, resolve] = createLazy();
+		const App = ({ Inner }) => (
+			<Fragment>
+				<Id />
+				<Suspense fallback={<i>f</i>}>
+					<Inner />
+				</Suspense>
+				<Id />
+			</Fragment>
+		);
+		const ids = el => [...el.querySelectorAll('input')].map(i => i.id);
+
+		const other = document.createElement('div');
+		render(<App Inner={Id} />, other);
+
+		render(<App Inner={Lazy} />, scratch);
+		await resolve(Id);
+		rerender();
+		expect(ids(scratch)).to.deep.equal(ids(other));
+	});
+});
+
+describe('suspense hydration resuming into mismatched server DOM', () => {
+	/** @type {HTMLDivElement} */
+	let scratch, rerender;
+
+	beforeEach(() => {
+		scratch = setupScratch();
+		rerender = setupRerender();
+	});
+
+	afterEach(() => {
+		teardown(scratch);
+	});
+
+	it('should remove server-rendered nodes the resumed boundary does not claim', async () => {
+		scratch.innerHTML = '<!--$s--><section>About</section><!--/$s-->';
+
+		const [Lazy, resolve] = createLazy();
+		hydrate(
+			<Suspense>
+				<Lazy />
+			</Suspense>,
+			scratch
+		);
+		rerender();
+		expect(scratch.innerHTML).to.equal(
+			'<!--$s--><section>About</section><!--/$s-->'
+		);
+
+		await resolve(() => <article>User</article>);
+		rerender();
+		expect(scratch.innerHTML).to.equal(
+			'<!--$s--><article>User</article><!--/$s-->'
+		);
+	});
+});
+
+describe('suspense hydration owning a streamed range', () => {
+	/** @type {HTMLDivElement} */
+	let scratch, rerender;
+
+	beforeEach(() => {
+		scratch = setupScratch();
+		rerender = setupRerender();
+	});
+
+	afterEach(() => {
+		teardown(scratch);
+	});
+
+	it('should remove the whole range when unmounted while suspended', async () => {
+		scratch.innerHTML =
+			'<main><!--$s--><p>a</p><p>b</p><!--/$s--><footer>f</footer></main>';
+		const footer = scratch.querySelector('footer');
+		const [Lazy, resolve] = createLazy();
+		let leave;
+		function App() {
+			const [left, setLeft] = useState(false);
+			leave = () => setLeft(true);
+			return (
+				<main>
+					{left ? (
+						<h2>gone</h2>
+					) : (
+						<Suspense>
+							<Lazy />
+						</Suspense>
+					)}
+					<footer>f</footer>
+				</main>
+			);
+		}
+
+		hydrate(<App />, scratch);
+		rerender();
+		leave();
+		rerender();
+		expect(scratch.innerHTML).to.equal(
+			'<main><h2>gone</h2><footer>f</footer></main>'
+		);
+		expect(scratch.querySelector('footer')).to.equal(footer);
+
+		await resolve(() => <p>resolved</p>);
+		rerender();
+		expect(scratch.innerHTML).to.equal(
+			'<main><h2>gone</h2><footer>f</footer></main>'
+		);
+	});
+
+	it('should remove the whole range when unmounted after re-suspending', async () => {
+		scratch.innerHTML = '<main><!--$s--><p>a</p><p>b</p><!--/$s--></main>';
+		const [Lazy] = createLazy();
+		let step;
+		function App() {
+			const [n, setN] = useState(0);
+			step = () => setN(n => n + 1);
+			return (
+				<main>
+					{n < 2 ? (
+						<Suspense>
+							<Lazy n={n} />
+						</Suspense>
+					) : (
+						<h2>gone</h2>
+					)}
+				</main>
+			);
+		}
+
+		hydrate(<App />, scratch);
+		rerender();
+		step();
+		rerender();
+		expect(scratch.innerHTML).to.equal(
+			'<main><!--$s--><p>a</p><p>b</p><!--/$s--></main>'
+		);
+		step();
+		rerender();
+		expect(scratch.innerHTML).to.equal('<main><h2>gone</h2></main>');
+	});
+
+	it('should remove nested ranges with their suspended owner and leave sibling ranges', async () => {
+		scratch.innerHTML =
+			'<main><input><!--$s--><p>root</p><!--/$s--><!--$s--><p>route</p><!--$s--><p>nested</p><!--/$s--><!--/$s--></main>';
+		const input = scratch.querySelector('input');
+		const [RootLazy, resolveRoot] = createLazy();
+		const [RouteLazy, resolveRoute] = createLazy();
+		let leave;
+		function Route() {
+			return (
+				<Suspense>
+					<RouteLazy />
+				</Suspense>
+			);
+		}
+		function App() {
+			const [left, setLeft] = useState(false);
+			leave = () => setLeft(true);
+			return (
+				<main>
+					<input />
+					<Suspense>
+						<RootLazy />
+					</Suspense>
+					{left ? <h2>destination</h2> : <Route />}
+				</main>
+			);
+		}
+
+		hydrate(<App />, scratch);
+		rerender();
+		input.value = 'draft';
+		input.focus();
+		leave();
+		rerender();
+		expect(scratch.innerHTML).to.equal(
+			'<main><input><!--$s--><p>root</p><!--/$s--><h2>destination</h2></main>'
+		);
+		expect(scratch.querySelector('input')).to.equal(input);
+		expect(input.value).to.equal('draft');
+		expect(document.activeElement).to.equal(input);
+
+		await resolveRoute(() => <p>route</p>);
+		await resolveRoot(() => <p>root resolved</p>);
+		rerender();
+		expect(scratch.innerHTML).to.equal(
+			'<main><input><!--$s--><p>root resolved</p><!--/$s--><h2>destination</h2></main>'
+		);
+	});
+
+	it('should mount a sibling after a range that re-suspended', async () => {
+		scratch.innerHTML = '<main><!--$s--><p>server</p><!--/$s--></main>';
+		const [Lazy, resolve] = createLazy();
+		let set;
+		function App() {
+			const [label, setLabel] = useState(null);
+			set = setLabel;
+			return (
+				<main>
+					<Suspense>
+						<Lazy />
+					</Suspense>
+					{label && <h2>{label}</h2>}
+				</main>
+			);
+		}
+
+		hydrate(<App />, scratch);
+		rerender();
+		set('after');
+		rerender();
+		expect(scratch.innerHTML).to.equal(
+			'<main><!--$s--><p>server</p><!--/$s--><h2>after</h2></main>'
+		);
+		const h2 = scratch.querySelector('h2');
+
+		await resolve(() => <p>resolved</p>);
+		rerender();
+		expect(scratch.innerHTML).to.equal(
+			'<main><!--$s--><p>resolved</p><!--/$s--><h2>after</h2></main>'
+		);
+		expect(scratch.querySelector('h2')).to.equal(h2);
+
+		set('updated');
+		rerender();
+		expect(scratch.querySelector('h2').textContent).to.equal('updated');
+	});
+
+	it('should mount a sibling before a suspended range', async () => {
+		scratch.innerHTML = '<main><!--$s--><p>server</p><!--/$s--></main>';
+		const [Lazy, resolve] = createLazy();
+		let show;
+		function App() {
+			const [shown, setShown] = useState(0);
+			show = () => setShown(n => n + 1);
+			return (
+				<main>
+					{shown > 0 && <h2>first</h2>}
+					{shown > 1 && <h3>second</h3>}
+					<Suspense>
+						<Lazy />
+					</Suspense>
+				</main>
+			);
+		}
+
+		hydrate(<App />, scratch);
+		rerender();
+		show();
+		rerender();
+		show();
+		rerender();
+		expect(scratch.innerHTML).to.equal(
+			'<main><h2>first</h2><h3>second</h3><!--$s--><p>server</p><!--/$s--></main>'
+		);
+
+		await resolve(() => <p>resolved</p>);
+		rerender();
+		expect(scratch.innerHTML).to.equal(
+			'<main><h2>first</h2><h3>second</h3><!--$s--><p>resolved</p><!--/$s--></main>'
+		);
+	});
+
+	it('should mount several siblings at once before a suspended range', async () => {
+		scratch.innerHTML = '<main><!--$s--><p>server</p><!--/$s--></main>';
+		const [Lazy, resolve] = createLazy();
+		let show;
+		function App() {
+			const [shown, setShown] = useState(false);
+			show = () => setShown(true);
+			return (
+				<main>
+					{shown && <h2>first</h2>}
+					{shown && <h3>second</h3>}
+					<Suspense>
+						<Lazy />
+					</Suspense>
+				</main>
+			);
+		}
+
+		hydrate(<App />, scratch);
+		rerender();
+		show();
+		rerender();
+		expect(scratch.innerHTML).to.equal(
+			'<main><h2>first</h2><h3>second</h3><!--$s--><p>server</p><!--/$s--></main>'
+		);
+
+		await resolve(() => <p>resolved</p>);
+		rerender();
+		expect(scratch.innerHTML).to.equal(
+			'<main><h2>first</h2><h3>second</h3><!--$s--><p>resolved</p><!--/$s--></main>'
+		);
+	});
+
+	it('should resume an empty range in place', async () => {
+		scratch.innerHTML =
+			'<main><h2>before</h2><!--$s--><!--/$s--><span>after</span></main>';
+		const [Lazy, resolve] = createLazy();
+		hydrate(
+			<main>
+				<h2>before</h2>
+				<Suspense>
+					<Lazy />
+				</Suspense>
+				<span>after</span>
+			</main>,
+			scratch
+		);
+		rerender();
+
+		await resolve(() => <p>late</p>);
+		rerender();
+		expect(scratch.textContent).to.equal('beforelateafter');
+	});
+
+	it('should drop its markers when a resolved boundary unmounts', async () => {
+		scratch.innerHTML =
+			'<main><!--$s:0--><p>server</p><!--/$s:0--><span>s</span></main>';
+		const [Lazy, resolve] = createLazy();
+		let hide;
+		function App() {
+			const [shown, setShown] = useState(true);
+			hide = () => setShown(false);
+			return (
+				<main>
+					{shown && (
+						<Suspense>
+							<Lazy />
+						</Suspense>
+					)}
+					<span>s</span>
+				</main>
+			);
+		}
+
+		hydrate(<App />, scratch);
+		rerender();
+		await resolve(() => <p>server</p>);
+		rerender();
+		expect(scratch.innerHTML).to.equal(
+			'<main><!--$s:0--><p>server</p><!--/$s:0--><span>s</span></main>'
+		);
+
+		hide();
+		rerender();
+		expect(scratch.innerHTML).to.equal('<main><span>s</span></main>');
+	});
+
+	it('should only drop the markers of a resolved boundary that moved', async () => {
+		scratch.innerHTML =
+			'<main><!--$s--><p>a</p><!--/$s--><!--$s--><p>b</p><!--/$s--><!--$s--><p>c</p><!--/$s--></main>';
+		const lazies = {};
+		const resolvers = {};
+		for (const key of ['a', 'b', 'c']) {
+			[lazies[key], resolvers[key]] = createLazy();
+		}
+		let setOrder;
+		function App() {
+			const [order, set] = useState(['a', 'b', 'c']);
+			setOrder = set;
+			return (
+				<main>
+					{order.map(key => (
+						<Suspense key={key}>{createElement(lazies[key])}</Suspense>
+					))}
+				</main>
+			);
+		}
+
+		hydrate(<App />, scratch);
+		rerender();
+		for (const key of ['a', 'b', 'c']) await resolvers[key](() => <p>{key}</p>);
+		rerender();
+
+		// Content moves without its markers, so markers can end up around a
+		// sibling's content.
+		setOrder(['c', 'a', 'b']);
+		rerender();
+		expect(scratch.textContent).to.equal('cab');
+		setOrder(['c', 'b']);
+		rerender();
+		expect(scratch.textContent).to.equal('cb');
+		setOrder([]);
+		rerender();
+		expect(scratch.innerHTML).to.equal('<main></main>');
 	});
 });
